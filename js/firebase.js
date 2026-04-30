@@ -15,27 +15,26 @@ const db = getFirestore(app);
 
 window._db = db;
 
-window.loadFromCloud = async function() {
+export async function loadFromCloud() {
   try {
-    const ref = doc(window._db, "edh", "main");
+    const ref = doc(db, "edh", "main");
     const snap = await getDoc(ref);
 
     if (snap.exists()) {
-      window.DB = snap.data();
+      return snap.data();
     }
 
-    renderAll();
+    return null;
   } catch (e) {
     console.error("Error cargando:", e);
-    renderAll();
+    return null;
   }
-};
+}
 
-// 🔼 GUARDAR
-window.saveToCloud = async function(DB) {
+export async function saveToCloud(DB) {
   try {
-    await setDoc(doc(window._db, "edh", "main"), DB);
+    await setDoc(doc(db, "edh", "main"), DB);
   } catch (e) {
     console.error("Error guardando:", e);
   }
-};
+  }

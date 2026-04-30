@@ -1,3 +1,5 @@
+import { loadFromCloud, saveToCloud } from "./firebase.js";
+
 window.DB = { players: [], decks: [], matches: [], tournaments: [] };
 if(!DB.players) DB.players = [];
 if(!DB.decks) DB.decks = [];
@@ -5,6 +7,8 @@ if(!DB.matches) DB.matches = [];
 if(!DB.tournaments) DB.tournaments = [];
 
 function save() {
+  console.log("Guardando DB:", DB);
+
   localStorage.setItem('edhDB', JSON.stringify(DB)); 
   saveToCloud(DB);
 }
@@ -500,9 +504,40 @@ async function init() {
     window.DB = JSON.parse(local);
   }
 
-  renderAll();
+  const cloud = await loadFromCloud();
 
-  await loadFromCloud();
+  if (cloud) {
+    window.DB = cloud;
+  }
+
+  renderAll();
 }
 
-init();
+init(); 
+
+// Exponer funciones al HTML
+window.showPlayersModal = showPlayersModal;
+window.hideModal = hideModal;
+window.addPlayer = addPlayer;
+window.deletePlayer = deletePlayer;
+
+window.showTab = showTab;
+
+window.addDeck = addDeck;
+window.deleteDeck = deleteDeck;
+window.rerenderDeckForm = rerenderDeckForm;
+
+window.setMatchType = setMatchType;
+window.updateMatchDeck = updateMatchDeck;
+window.updateMatchDeck2 = updateMatchDeck2;
+window.saveMatch = saveMatch;
+window.deleteMatch = deleteMatch;
+
+window.sortLeaderboard = sortLeaderboard;
+
+
+window.addTournamentPlayer = addTournamentPlayer;
+window.removeTournamentPlayer = removeTournamentPlayer;
+window.createTournament = createTournament;
+window.closeTournament = closeTournament;
+window.deleteTournament = deleteTournament;
