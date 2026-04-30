@@ -18,6 +18,7 @@ function uid() { return Date.now().toString(36) + Math.random().toString(36).sli
 let matchType = 'ffa';
 let tournamentSortKey = 'wr';
 let activeTournamentId = null;
+let editingMatchId = null;
 
 function playerName(id) {
   const p = DB.players.find(p=>p.id===id);
@@ -209,7 +210,14 @@ function saveMatch() {
     }
   }
   if(!slots.length) { alert('Registrá al menos un jugador con mazo.'); return; }
-  DB.matches.push({ id: uid(), type: matchType, date, tournamentId, slots });
+  const newMatch = { id: editingMatchId || uid(), type: matchType, date, tournamentId, slots };
+
+if (editingMatchId) {
+  DB.matches = DB.matches.map(m => m.id === editingMatchId ? newMatch : m);
+  editingMatchId = null;
+} else {
+  DB.matches.push(newMatch);
+}
   save(); renderAll(); showTab('history');
 }
 
@@ -227,10 +235,57 @@ function renderHistory() {
       <div style="flex:1;min-width:0;">
         ${m.slots.map(s=>`<span style="font-size:12px;margin-right:8px;${s.won?'color:var(--color-text-success);font-weight:500;':'color:var(--color-text-secondary);'}">${playerName(s.playerId)}: ${deckName(s.deckId)}${s.won?' ✓':''}</span>`).join('')}
       </div>
+      <button class="btn btn-sm" onclick="editMatch('${m.id}')">editar</button>
       <button class="btn btn-sm btn-danger" onclick="deleteMatch('${m.id}')">×</button>
     </div>`;
   });
   el.innerHTML = html;
+}
+
+function editMatch(id) {
+  const m = DB.matches.find(m => m.id === id);
+  if (!m) return;
+
+  editingMatchId = id;
+  matchType = m.type;
+
+  renderMatch();
+
+  // cargar datos después de render
+  setTimeout(() => {
+    document.getElementById('m-date').value = m.date;
+
+    if (m.type === 'ffa') {
+      m.slots.forEach((s, i) => {
+        document.getElementById(`ms-p${i}`).value = s.playerId;
+        updateMatchDeck(i);
+        document.getElementById(`ms-d${i}`).value = s.deckId;
+
+        if (s.won) {
+          document.querySelector(`input[name="ffa-win"][value="${i}"]`).checked = true;
+        }
+      });
+    } else {
+      const winTeam = m.slots.find(s => s.won)?.team;
+
+      if (winTeam) {
+        document.querySelector(`input[name="team-win"][value="${winTeam}"]`).checked = true;
+      }
+
+      const grouped = { t1: [], t2: [] };
+      m.slots.forEach(s => grouped[s.team].push(s));
+
+      ['t1','t2'].forEach(t => {
+        grouped[t].forEach((s, i) => {
+          document.getElementById(`ms-${t}p${i}`).value = s.playerId;
+          updateMatchDeck2(t, i);
+          document.getElementById(`ms-${t}d${i}`).value = s.deckId;
+        });
+      });
+    }
+
+    showTab('match');
+  }, 0);
 }
 
 function deleteMatch(id) {
@@ -544,6 +599,7 @@ window.setMatchType = setMatchType;
 window.updateMatchDeck = updateMatchDeck;
 window.updateMatchDeck2 = updateMatchDeck2;
 window.saveMatch = saveMatch;
+window.editMatch = editMatch;
 window.deleteMatch = deleteMatch;
 
 window.sortLeaderboard = sortLeaderboard;
