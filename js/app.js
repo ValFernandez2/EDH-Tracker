@@ -35,11 +35,16 @@ function playerOptions(selected) {
     DB.players.map(p=>`<option value="${p.id}"${p.id===selected?' selected':''}>${p.name}</option>`).join('');
 }
 function deckOptions(pid, selected) {
-  const decks = DB.decks.filter(d=>d.playerId===pid);
+  const decks = DB.decks;
   if(!pid) return '<option value="">— elegí jugador primero —</option>';
   if(!decks.length) return '<option value="">— sin mazos —</option>';
   return '<option value="">Seleccionar mazo</option>' +
-    decks.map(d=>`<option value="${d.id}"${d.id===selected?' selected':''}>${d.name}</option>`).join('');
+  decks.map(d=>{
+    const owner = playerName(d.playerId);
+    return `<option value="${d.id}"${d.id===selected?' selected':''}>
+      ${d.name} (${owner})
+    </option>`;
+  }).join('');
 }
 
 function renderDecks() {
@@ -67,8 +72,8 @@ function renderDecks() {
   }
   html += '<div class="section-title">Agregar mazo</div><div class="card-box">';
   html += `<div class="form-row">
-    <div class="form-group" style="margin-bottom:0;"><label>Jugador dueño</label><select id="d-player" onchange="rerenderDeckForm()">${playerOptions()}</select></div>
-    <div class="form-group" style="margin-bottom:0;"><label>Nombre del mazo</label><input type="text" id="d-name" placeholder="Ej: Control Azul"></div>
+    <div class="form-group" style="margin-bottom:0;"><label>Dueño</label><select id="d-player" onchange="rerenderDeckForm()">${playerOptions()}</select></div>
+    <div class="form-group" style="margin-bottom:0;"><label>Nombre</label><input type="text" id="d-name" placeholder="Ej: Control Azul"></div>
   </div>
   <div class="form-row" style="margin-top:10px;">
     <div class="form-group" style="margin-bottom:0;"><label>Comandante</label><input type="text" id="d-commander" placeholder="Ej: Atraxa"></div>
@@ -94,9 +99,17 @@ function addDeck() {
   const pid = document.getElementById('d-player').value;
   const name = document.getElementById('d-name').value.trim();
   const commander = document.getElementById('d-commander').value.trim();
+
   if(!pid) { alert('Seleccioná un jugador.'); return; }
   if(!name) { alert('Ingresá un nombre para el mazo.'); return; }
+
   const colors = [...document.querySelectorAll('#color-picker input:checked')].map(c=>c.value);
+
+  if(colors.length === 0) {
+    alert('Seleccioná al menos un color para el mazo.');
+    return;
+  }
+
   DB.decks.push({ id: uid(), playerId: pid, name, commander, colors });
   save(); renderAll();
 }
