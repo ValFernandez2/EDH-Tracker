@@ -4,7 +4,11 @@ if(!DB.decks) DB.decks = [];
 if(!DB.matches) DB.matches = [];
 if(!DB.tournaments) DB.tournaments = [];
 
-function save() {saveToCloud(DB);}
+function save() {
+  localStorage.setItem('edhDB', JSON.stringify(DB)); 
+  saveToCloud(DB);
+}
+
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 
 let matchType = 'ffa';
@@ -489,4 +493,16 @@ function renderAll() {
   renderTournament();
 }
 
-loadFromCloud();
+
+async function init() {
+  const local = localStorage.getItem('edhDB');
+  if (local) {
+    window.DB = JSON.parse(local);
+  }
+
+  renderAll();
+
+  await loadFromCloud();
+}
+
+init();
