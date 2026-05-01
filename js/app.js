@@ -26,6 +26,16 @@ if (!window.ffaSlots || typeof window.ffaSlots === "number") {
   }));
 }
 
+// Team match config
+window.teamConfig = window.teamConfig || { numTeams: 2, playersPerTeam: 2 };
+function initTeamSlots() {
+  const { numTeams, playersPerTeam } = window.teamConfig;
+  window.teamSlots = Array.from({ length: numTeams }, () =>
+    Array.from({ length: playersPerTeam }, () => ({ playerId: '', deckId: '' }))
+  );
+}
+if (!window.teamSlots) initTeamSlots();
+
 function playerName(id) {
   const p = DB.players.find(p=>p.id===id);
   return p ? p.name : '—';
@@ -94,19 +104,21 @@ function renderDecks() {
   html += '<div class="section-title">Agregar mazo</div><div class="card-box">';
   html += `<div class="form-row">
     <div class="form-group" style="margin-bottom:0;"><label>Dueño</label><select id="d-player" onchange="rerenderDeckForm()">${playerOptions()}</select></div>
-    <div class="form-group" style="margin-bottom:0;"><label>Nombre</label><input type="text" id="d-name" placeholder="Ej: Control Azul"></div>
+    <div class="form-group" style="margin-bottom:0;"><label>Nombre del mazo</label><input type="text" id="d-name" placeholder="Ej: Control Azul"></div>
   </div>
-  <div class="form-row" style="margin-top:10px;">
-    <div class="form-group" style="margin-bottom:0;"><label>Comandante</label><input type="text" id="d-commander" placeholder="Ej: Atraxa"></div>
-    <div class="form-group" style="margin-bottom:0;"><label>Colores</label>
-      <div class="colors-row" id="color-picker">
-        <label class="color-toggle"><input type="checkbox" value="W"><div class="color-dot W">W</div></label>
-        <label class="color-toggle"><input type="checkbox" value="U"><div class="color-dot U">U</div></label>
-        <label class="color-toggle"><input type="checkbox" value="B"><div class="color-dot B">B</div></label>
-        <label class="color-toggle"><input type="checkbox" value="R"><div class="color-dot R">R</div></label>
-        <label class="color-toggle"><input type="checkbox" value="G"><div class="color-dot G">G</div></label>
-        <label class="color-toggle"><input type="checkbox" value="C"><div class="color-dot C">C</div></label>
-      </div>
+  <div class="form-group" style="margin-top:10px;position:relative;">
+    <label>Comandante <span style="font-size:11px;color:var(--color-text-secondary);">(buscá por nombre)</span></label>
+    <input type="text" id="d-commander" placeholder="Ej: Atraxa, Praetors' Voice" autocomplete="off" oninput="onCommanderInput()">
+    <div id="commander-suggestions" style="display:none;position:absolute;z-index:9999;background:var(--color-background-primary, #fff);border:1px solid var(--color-border-secondary);border-radius:var(--border-radius-md);width:100%;max-height:220px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,0.18);top:calc(100% + 2px);left:0;backdrop-filter:none;opacity:1;"></div>
+  </div>
+  <div class="form-group" style="margin-bottom:0;"><label>Colores <span id="colors-auto-hint" style="font-size:11px;color:var(--color-text-success);display:none;">✓ detectados automáticamente</span><span id="colors-manual-hint" style="font-size:11px;color:var(--color-text-secondary);"> · seleccioná un comandante primero</span></label>
+    <div class="colors-row" id="color-picker" style="pointer-events:none;opacity:0.45;">
+      <label class="color-toggle"><input type="checkbox" value="W" disabled><div class="color-dot W">W</div></label>
+      <label class="color-toggle"><input type="checkbox" value="U" disabled><div class="color-dot U">U</div></label>
+      <label class="color-toggle"><input type="checkbox" value="B" disabled><div class="color-dot B">B</div></label>
+      <label class="color-toggle"><input type="checkbox" value="R" disabled><div class="color-dot R">R</div></label>
+      <label class="color-toggle"><input type="checkbox" value="G" disabled><div class="color-dot G">G</div></label>
+      <label class="color-toggle"><input type="checkbox" value="C" disabled><div class="color-dot C">C</div></label>
     </div>
   </div>
   <div style="margin-top:12px;"><button class="btn btn-gold" onclick="addDeck()">Agregar mazo</button></div>`;
@@ -115,6 +127,89 @@ function renderDecks() {
 }
 
 function rerenderDeckForm() {}
+
+// ── Scryfall Commander Autocomplete ──────────────────────────────────────────
+let _scryfallTimer = null;
+let _commanderCards = [];
+
+// Close dropdown when clicking outside
+document.addEventListener('mousedown', e => {
+  const sug = document.getElementById('commander-suggestions');
+  const inp = document.getElementById('d-commander');
+  if (sug && inp && !sug.contains(e.target) && e.target !== inp) {
+    sug.style.display = 'none';
+  }
+});
+
+function onCommanderInput() {
+  const input = document.getElementById('d-commander');
+  if (!input) return;
+  const q = input.value.trim();
+  clearTimeout(_scryfallTimer);
+  if (q.length < 2) {
+    const sug = document.getElementById('commander-suggestions');
+    if (sug) sug.style.display = 'none';
+    return;
+  }
+  _scryfallTimer = setTimeout(() => fetchCommanderSuggestions(q), 300);
+}
+
+async function fetchCommanderSuggestions(q) {
+  const sugEl = document.getElementById('commander-suggestions');
+  if (!sugEl) return;
+  sugEl.style.display = 'block';
+  sugEl.innerHTML = '<div style="padding:10px;font-size:12px;color:var(--color-text-secondary);">Buscando...</div>';
+  try {
+    const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}+is:commander&order=name&unique=cards`;
+    const res = await fetch(url);
+    if (!res.ok) { sugEl.style.display = 'none'; return; }
+    const data = await res.json();
+    if (!data.data || !data.data.length) {
+      sugEl.innerHTML = '<div style="padding:10px;font-size:12px;color:var(--color-text-secondary);">Sin resultados</div>';
+      return;
+    }
+    _commanderCards = data.data.slice(0, 8);
+    sugEl.innerHTML = _commanderCards.map((card, idx) => {
+      const colors = card.color_identity || [];
+      const pips = colors.length
+        ? colors.map(c => `<span class="pip pip-${c}" style="width:12px;height:12px;font-size:7px;">${c}</span>`).join('')
+        : `<span class="pip pip-C" style="width:12px;height:12px;font-size:7px;">C</span>`;
+      return `<div
+        data-idx="${idx}"
+        onmousedown="selectCommander(${idx})"
+        style="padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;border-bottom:0.5px solid var(--color-border-tertiary);font-size:13px;"
+        onmouseover="this.style.background='var(--color-background-secondary)'"
+        onmouseout="this.style.background=''">
+        <div style="display:flex;gap:2px;">${pips}</div>
+        <span style="flex:1;">${card.name}</span>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    sugEl.style.display = 'none';
+  }
+}
+
+function selectCommander(idx) {
+  const card = _commanderCards[idx];
+  if (!card) return;
+  const input = document.getElementById('d-commander');
+  if (input) input.value = card.name;
+  const colors = card.color_identity || [];
+  const picker = document.getElementById('color-picker');
+  if (picker) { picker.style.pointerEvents = 'none'; picker.style.opacity = '1'; }
+  document.querySelectorAll('#color-picker input').forEach(cb => {
+    cb.disabled = false;
+    cb.checked = colors.length === 0 ? cb.value === 'C' : colors.includes(cb.value);
+    cb.disabled = true;
+  });
+  const hint = document.getElementById('colors-auto-hint');
+  if (hint) hint.style.display = 'inline';
+  const manualHint = document.getElementById('colors-manual-hint');
+  if (manualHint) manualHint.style.display = 'none';
+  const sugEl = document.getElementById('commander-suggestions');
+  if (sugEl) sugEl.style.display = 'none';
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 function addDeck() {
   const pid = document.getElementById('d-player').value;
@@ -183,7 +278,7 @@ function renderMatch() {
     <div class="section-title">Tipo de partida</div>
     <div class="type-toggle">
       <button class="type-btn${matchType==='ffa'?' active':''}" onclick="setMatchType('ffa')">Todos contra Todos</button>
-      <button class="type-btn${matchType==='2v2'?' active':''}" onclick="setMatchType('2v2')">Equipos</button>
+      <button class="type-btn${matchType==='2v2'?' active':''}" onclick="setMatchType('2v2')">Por Equipos</button>
     </div>`;
 
   html += '<div id="match-slots">';
@@ -249,31 +344,62 @@ function renderMatch() {
   }
 
   else {
-    for(const [t,label] of [['t1','Equipo 1'],['t2','Equipo 2']]) {
+    const { numTeams, playersPerTeam } = window.teamConfig;
+    const slots = window.teamSlots;
 
-      html += `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin:${t==='t1'?'0':'12px'} 0 6px;">
-        <div style="font-size:13px;font-weight:500;color:var(--color-text-primary);">${label}</div>
-        <label class="won-toggle">
-          <input type="radio" name="team-result" value="${t}"> ganó
-        </label>
-      </div>`;
+    // Config selectors
+    html += `<div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <label style="font-size:12px;color:var(--color-text-secondary);">Equipos:</label>
+        <select onchange="updateTeamConfig('numTeams', this.value)" style="width:auto;">
+          ${[2,3,4].map(n=>`<option value="${n}"${n===numTeams?' selected':''}>${n}</option>`).join('')}
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <label style="font-size:12px;color:var(--color-text-secondary);">Jugadores por equipo:</label>
+        <select onchange="updateTeamConfig('playersPerTeam', this.value)" style="width:auto;">
+          ${[1,2,3,4].map(n=>`<option value="${n}"${n===playersPerTeam?' selected':''}>${n}</option>`).join('')}
+        </select>
+      </div>
+    </div>`;
 
-      for(let i=0;i<2;i++) {
-        html += `
-        <div class="player-slot">
-          <select id="ms-${t}p${i}" onchange="updateMatchDeck2('${t}',${i})">
-            ${playerOptions()}
+    const teamColors = ['var(--gold)','#6a9fc8','#60a860','#c87060'];
+    const teamNames = ['Equipo 1','Equipo 2','Equipo 3','Equipo 4'];
+
+    for(let t=0; t<numTeams; t++) {
+      const tSlots = slots[t] || [];
+      html += `<div style="border-left:3px solid ${teamColors[t]};padding-left:10px;margin-bottom:12px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div style="font-size:13px;font-weight:500;color:var(--color-text-primary);">${teamNames[t]}</div>
+          <label class="won-toggle">
+            <input type="radio" name="team-result" value="${t}"> ganó
+          </label>
+        </div>`;
+      for(let i=0; i<playersPerTeam; i++) {
+        const slot = tSlots[i] || { playerId: '', deckId: '' };
+        const deckLabel = slot.deckId ? (() => {
+          const d = deckOf(slot.deckId);
+          return d ? `${d.name} - ${d.commander || '—'} (${playerName(d.playerId)})` : '';
+        })() : '';
+        html += `<div class="player-slot" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px;">
+          <select onchange="updateTeamSlotPlayer(${t},${i},this.value)">
+            ${playerOptions(slot.playerId)}
           </select>
-          <select id="ms-${t}d${i}">
-            ${deckOptions('')}
-          </select>
+          <input list="team-decks-${t}-${i}" id="team-deck-input-${t}-${i}"
+            placeholder="Seleccionar mazo" value="${deckLabel}"
+            onchange="updateTeamSlotDeck(${t},${i},this.value)">
+          <datalist id="team-decks-${t}-${i}">
+            ${DB.decks.map(d=>{
+              const owner = playerName(d.playerId);
+              return `<option value="${d.name} - ${d.commander||'—'} (${owner})"></option>`;
+            }).join('')}
+          </datalist>
         </div>`;
       }
+      html += '</div>';
     }
 
-    html += `
-    <div style="margin:12px 0 6px;">
+    html += `<div style="margin:4px 0 6px;">
       <label class="won-toggle">
         <input type="radio" name="team-result" value="draw"> Empate
       </label>
@@ -308,6 +434,31 @@ function renderMatch() {
 }
 
 function setMatchType(t) { matchType = t; renderMatch(); }
+
+function updateTeamConfig(key, val) {
+  window.teamConfig[key] = parseInt(val);
+  initTeamSlots();
+  renderMatch();
+}
+
+function updateTeamSlotPlayer(teamIdx, playerIdx, playerId) {
+  if (!window.teamSlots[teamIdx]) window.teamSlots[teamIdx] = [];
+  if (!window.teamSlots[teamIdx][playerIdx]) window.teamSlots[teamIdx][playerIdx] = {};
+  window.teamSlots[teamIdx][playerIdx].playerId = playerId;
+  window.teamSlots[teamIdx][playerIdx].deckId = '';
+  renderMatch();
+}
+
+function updateTeamSlotDeck(teamIdx, playerIdx, value) {
+  if (!window.teamSlots[teamIdx]) return;
+  if (!window.teamSlots[teamIdx][playerIdx]) window.teamSlots[teamIdx][playerIdx] = {};
+  const deck = DB.decks.find(d => {
+    const owner = playerName(d.playerId);
+    const label = `${d.name} - ${d.commander || '—'} (${owner})`;
+    return label === value;
+  });
+  window.teamSlots[teamIdx][playerIdx].deckId = deck ? deck.id : '';
+}
 
 function updateMatchDeck(i) {
   const pid = document.getElementById(`ms-p${i}`).value;
@@ -349,18 +500,20 @@ function saveMatch() {
     const result = document.querySelector('input[name="team-result"]:checked');
     if(!result) { alert('Seleccioná resultado.'); return; }
 
-    const value = result.value;
+    const value = result.value; // team index (0,1,2...) or "draw"
+    const { numTeams, playersPerTeam } = window.teamConfig;
+    const tSlots = window.teamSlots;
 
-    for(const t of ['t1','t2']) {
-      for(let i=0;i<2;i++){
-        const pid = document.getElementById(`ms-${t}p${i}`).value;
-        const deckId = document.getElementById(`ms-${t}d${i}`).value;
+    for(let t=0; t<numTeams; t++) {
+      for(let i=0; i<playersPerTeam; i++){
+        const slot = (tSlots[t] || [])[i] || {};
+        const pid = slot.playerId;
+        const deckId = slot.deckId;
         if(!pid || !deckId) continue;
-
         if(value === "draw") {
           slots.push({ playerId: pid, deckId, team: t, won: false, draw: true });
         } else {
-          slots.push({ playerId: pid, deckId, team: t, won: t === value, draw: false });
+          slots.push({ playerId: pid, deckId, team: t, won: String(t) === value, draw: false });
         }
       }
     }
@@ -772,8 +925,13 @@ window.updateFFASlotDeck = updateFFASlotDeck;
 window.addDeck = addDeck;
 window.deleteDeck = deleteDeck;
 window.rerenderDeckForm = rerenderDeckForm;
+window.onCommanderInput = onCommanderInput;
+window.selectCommander = selectCommander;
 
 window.setMatchType = setMatchType;
+window.updateTeamConfig = updateTeamConfig;
+window.updateTeamSlotPlayer = updateTeamSlotPlayer;
+window.updateTeamSlotDeck = updateTeamSlotDeck;
 window.updateMatchDeck = updateMatchDeck;
 window.updateMatchDeck2 = updateMatchDeck2;
 window.saveMatch = saveMatch;
