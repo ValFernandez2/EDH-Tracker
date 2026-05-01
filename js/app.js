@@ -19,6 +19,12 @@ let matchType = 'ffa';
 let tournamentSortKey = 'wr';
 let activeTournamentId = null;
 let editingMatchId = null;
+if (!window.ffaSlots || typeof window.ffaSlots === "number") {
+  window.ffaSlots = Array.from({ length: 4 }, () => ({
+    playerId: "",
+    deckId: ""
+  }));
+}
 
 function playerName(id) {
   const p = DB.players.find(p=>p.id===id);
@@ -35,17 +41,31 @@ function playerOptions(selected) {
   return '<option value="">Seleccionar jugador</option>' +
     DB.players.map(p=>`<option value="${p.id}"${p.id===selected?' selected':''}>${p.name}</option>`).join('');
 }
-function deckOptions(pid, selected) {
-  const decks = DB.decks;
+
+function deckOptions(pid, selected, filter = "") {
   if(!pid) return '<option value="">— elegí jugador primero —</option>';
-  if(!decks.length) return '<option value="">— sin mazos —</option>';
+
+  let decks = DB.decks;
+
+  if(filter) {
+    const f = filter.toLowerCase();
+    decks = decks.filter(d =>
+      d.name.toLowerCase().includes(f) ||
+      (d.commander || "").toLowerCase().includes(f) ||
+      playerName(d.playerId).toLowerCase().includes(f)
+    );
+  }
+
+  if(!decks.length) return '<option value="">— sin resultados —</option>';
+
   return '<option value="">Seleccionar mazo</option>' +
-  decks.map(d=>{
-    const owner = playerName(d.playerId);
-    return `<option value="${d.id}"${d.id===selected?' selected':''}>
-      ${d.name} (${owner})
-    </option>`;
-  }).join('');
+    decks.map(d=>{
+      const owner = playerName(d.playerId);
+      const commander = d.commander || '—';
+      return `<option value="${d.id}" ${d.id===selected?'selected':''}>
+        ${d.name} - ${commander} (${owner})
+      </option>`;
+    }).join('');
 }
 
 function renderDecks() {
@@ -122,8 +142,43 @@ function deleteDeck(id) {
   save(); renderAll();
 }
 
+function addFFASlot() {
+  if(window.ffaSlots.length >= 8) return;
+
+  window.ffaSlots.push({
+    playerId: "",
+    deckId: ""
+  });
+
+  renderMatch();
+}
+
+function removeFFASlot(index) {
+  if(window.ffaSlots.length <= 1) return;
+
+  window.ffaSlots.splice(index, 1);
+  renderMatch();
+}
+
+function updateFFASlotPlayer(i, playerId) {
+  window.ffaSlots[i].playerId = playerId;
+  window.ffaSlots[i].deckId = ""; // reset deck
+  renderMatch();
+}
+
+function updateFFASlotDeck(i, value) {
+  const deck = DB.decks.find(d => {
+    const owner = playerName(d.playerId);
+    const label = `${d.name} - ${d.commander || '—'} (${owner})`;
+    return label === value;
+  });
+
+  window.ffaSlots[i].deckId = deck ? deck.id : "";
+}
+
 function renderMatch() {
   const el = document.getElementById('tab-match');
+
   let html = `<div class="card-box">
     <div class="section-title">Tipo de partida</div>
     <div class="type-toggle">
@@ -132,42 +187,124 @@ function renderMatch() {
     </div>`;
 
   html += '<div id="match-slots">';
+
   if(matchType==='ffa') {
-    html += '<div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:8px;">Marcá quién ganó (solo uno)</div>';
-    for(let i=0;i<4;i++) {
-      html += `<div class="player-slot">
-        <select id="ms-p${i}" onchange="updateMatchDeck(${i})">${playerOptions()}</select>
-        <select id="ms-d${i}">${deckOptions('')}</select>
-        <label class="won-toggle"><input type="radio" name="ffa-win" value="${i}"> ganó</label>
+    html += '<div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:8px;">Elegí resultado</div>';
+
+    const slots = window.ffaSlots;
+
+    for(let i=0;i<slots.length;i++) {
+      const slot = slots[i];
+
+      const deckLabel = slot.deckId
+        ? (() => {
+            const d = deckOf(slot.deckId);
+            return d ? `${d.name} - ${d.commander || '—'} (${playerName(d.playerId)})` : '';
+          })()
+        : '';
+
+      html += `
+      <div class="player-slot" style="display:flex;align-items:center;gap:6px;">
+
+        ${slots.length > 1 ? `
+          <button class="btn btn-sm btn-danger" onclick="removeFFASlot(${i})">×</button>
+        ` : ''}
+
+        <select onchange="updateFFASlotPlayer(${i}, this.value)">
+          ${playerOptions(slot.playerId)}
+        </select>
+
+        <input 
+          list="decks-${i}" 
+          id="deck-input-${i}" 
+          placeholder="Seleccionar mazo"
+          value="${deckLabel}"
+          onchange="updateFFASlotDeck(${i}, this.value)"
+        >
+
+        <datalist id="decks-${i}">
+          ${DB.decks.map(d=>{
+            const owner = playerName(d.playerId);
+            const commander = d.commander || '—';
+            return `<option value="${d.name} - ${commander} (${owner})"></option>`;
+          }).join('')}
+        </datalist>
+
+        <label class="won-toggle">
+          <input type="radio" name="ffa-result" value="win-${i}"> ganó
+        </label>
+
       </div>`;
     }
-  } else {
+
+    if(slots.length < 8) {
+      html += `<button class="btn btn-sm" onclick="addFFASlot()">+ Agregar jugador</button>`;
+    }
+
+    html += `
+    <div style="margin-top:10px;">
+      <label class="won-toggle">
+        <input type="radio" name="ffa-result" value="draw"> Empate
+      </label>
+    </div>`;
+  }
+
+  else {
     for(const [t,label] of [['t1','Equipo 1'],['t2','Equipo 2']]) {
-      html += `<div style="font-size:13px;font-weight:500;color:var(--color-text-primary);margin:${t==='t1'?'0':'12px'} 0 8px;">${label}</div>`;
+
+      html += `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin:${t==='t1'?'0':'12px'} 0 6px;">
+        <div style="font-size:13px;font-weight:500;color:var(--color-text-primary);">${label}</div>
+        <label class="won-toggle">
+          <input type="radio" name="team-result" value="${t}"> ganó
+        </label>
+      </div>`;
+
       for(let i=0;i<2;i++) {
-        html += `<div class="player-slot">
-          <select id="ms-${t}p${i}" onchange="updateMatchDeck2('${t}',${i})">${playerOptions()}</select>
-          <select id="ms-${t}d${i}">${deckOptions('')}</select>
-          <span></span>
+        html += `
+        <div class="player-slot">
+          <select id="ms-${t}p${i}" onchange="updateMatchDeck2('${t}',${i})">
+            ${playerOptions()}
+          </select>
+          <select id="ms-${t}d${i}">
+            ${deckOptions('')}
+          </select>
         </div>`;
       }
     }
-    html += `<div style="margin:10px 0 4px;font-size:13px;color:var(--color-text-secondary);">Equipo ganador:</div>
-      <div style="display:flex;gap:16px;font-size:13px;margin-bottom:4px;">
-        <label class="won-toggle"><input type="radio" name="team-win" value="t1"> Equipo 1</label>
-        <label class="won-toggle"><input type="radio" name="team-win" value="t2"> Equipo 2</label>
-      </div>`;
+
+    html += `
+    <div style="margin:12px 0 6px;">
+      <label class="won-toggle">
+        <input type="radio" name="team-result" value="draw"> Empate
+      </label>
+    </div>`;
   }
+
   html += '</div>';
 
-  html += `<div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-    <div class="form-group" style="margin-bottom:0;"><label>Fecha</label><input type="date" id="m-date" style="max-width:160px;" value="${new Date().toISOString().slice(0,10)}"></div>
-    <div class="form-group" style="margin-bottom:0;"><label>Torneo (opcional)</label>
-      <select id="m-tournament"><option value="">— sin torneo —</option>${DB.tournaments.filter(t=>t.active).map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}</select>
+  html += `
+  <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <div class="form-group" style="margin-bottom:0;">
+      <label>Fecha</label>
+      <input type="date" id="m-date" style="max-width:160px;" value="${new Date().toISOString().slice(0,10)}">
+    </div>
+
+    <div class="form-group" style="margin-bottom:0;">
+      <label>Torneo (opcional)</label>
+      <select id="m-tournament">
+        <option value="">— sin torneo —</option>
+        ${DB.tournaments.filter(t=>t.active).map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}
+      </select>
     </div>
   </div>
-  <div style="margin-top:12px;"><button class="btn btn-gold" onclick="saveMatch()">Guardar partida</button></div>
+
+  <div style="margin-top:12px;">
+    <button class="btn btn-gold" onclick="saveMatch()">Guardar partida</button>
+  </div>
+
   </div>`;
+
   el.innerHTML = html;
 }
 
@@ -186,40 +323,77 @@ function saveMatch() {
   const date = document.getElementById('m-date').value || new Date().toISOString().slice(0,10);
   const tournamentId = document.getElementById('m-tournament').value || null;
   let slots = [];
-  if(matchType==='ffa') {
-    const winnerIdx = document.querySelector('input[name="ffa-win"]:checked');
-    if(!winnerIdx) { alert('Marcá quién ganó.'); return; }
-    const wi = parseInt(winnerIdx.value);
-    for(let i=0;i<4;i++){
-      const pid = document.getElementById(`ms-p${i}`).value;
-      const deckId = document.getElementById(`ms-d${i}`).value;
-      if(!pid||!deckId) continue;
-      slots.push({ playerId: pid, deckId, won: i===wi });
+
+  if(matchType === 'ffa') {
+
+    const result = document.querySelector('input[name="ffa-result"]:checked');
+    if(!result) { alert('Seleccioná resultado.'); return; }
+
+    const value = result.value;
+
+    for(let i=0;i<window.ffaSlots.length;i++) {
+      const slot = window.ffaSlots[i];
+      const pid = slot.playerId;
+      const deckId = slot.deckId;
+      if(!pid || !deckId) continue;
+
+      if(value === "draw") {
+        slots.push({ playerId: pid, deckId, won: false, draw: true });
+      } else {
+        const winIndex = parseInt(value.split("-")[1]);
+        slots.push({ playerId: pid, deckId, won: i === winIndex, draw: false });
+      }
     }
+
   } else {
-    const wt = document.querySelector('input[name="team-win"]:checked');
-    if(!wt) { alert('Marcá el equipo ganador.'); return; }
-    const winTeam = wt.value;
+
+    const result = document.querySelector('input[name="team-result"]:checked');
+    if(!result) { alert('Seleccioná resultado.'); return; }
+
+    const value = result.value;
+
     for(const t of ['t1','t2']) {
       for(let i=0;i<2;i++){
         const pid = document.getElementById(`ms-${t}p${i}`).value;
         const deckId = document.getElementById(`ms-${t}d${i}`).value;
-        if(!pid||!deckId) continue;
-        slots.push({ playerId: pid, deckId, team: t, won: t===winTeam });
+        if(!pid || !deckId) continue;
+
+        if(value === "draw") {
+          slots.push({ playerId: pid, deckId, team: t, won: false, draw: true });
+        } else {
+          slots.push({ playerId: pid, deckId, team: t, won: t === value, draw: false });
+        }
       }
     }
   }
-  if(!slots.length) { alert('Registrá al menos un jugador con mazo.'); return; }
-  const newMatch = { id: editingMatchId || uid(), type: matchType, date, tournamentId, slots };
 
-if (editingMatchId) {
-  DB.matches = DB.matches.map(m => m.id === editingMatchId ? newMatch : m);
-  editingMatchId = null;
-} else {
-  DB.matches.push(newMatch);
+  console.log("Saving match:", { matchType, slots });
+  
+  if(!slots.length) {
+    alert('Registrá al menos un jugador con mazo.');
+    return;
+  }
+
+  const newMatch = {
+    id: editingMatchId || uid(),
+    type: matchType,
+    date,
+    tournamentId,
+    slots
+  };
+
+  if (editingMatchId) {
+    DB.matches = DB.matches.map(m => m.id === editingMatchId ? newMatch : m);
+    editingMatchId = null;
+  } else {
+    DB.matches.push(newMatch);
+  }
+
+  save();
+  renderAll();
+  showTab('history');
 }
-  save(); renderAll(); showTab('history');
-}
+
 
 function renderHistory() {
   const el = document.getElementById('tab-history');
@@ -591,6 +765,11 @@ window.deletePlayer = deletePlayer;
 
 window.showTab = showTab;
 
+window.addFFASlot = addFFASlot;
+window.removeFFASlot = removeFFASlot;
+window.updateFFASlotPlayer = updateFFASlotPlayer;
+window.updateFFASlotDeck = updateFFASlotDeck;
+
 window.addDeck = addDeck;
 window.deleteDeck = deleteDeck;
 window.rerenderDeckForm = rerenderDeckForm;
@@ -603,7 +782,6 @@ window.editMatch = editMatch;
 window.deleteMatch = deleteMatch;
 
 window.sortLeaderboard = sortLeaderboard;
-
 
 window.addTournamentPlayer = addTournamentPlayer;
 window.removeTournamentPlayer = removeTournamentPlayer;
