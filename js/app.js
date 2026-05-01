@@ -182,14 +182,13 @@ function renderMatch() {
   let html = `<div class="card-box">
     <div class="section-title">Tipo de partida</div>
     <div class="type-toggle">
-      <button class="type-btn${matchType==='ffa'?' active':''}" onclick="setMatchType('ffa')">Free for All (4 jugadores)</button>
-      <button class="type-btn${matchType==='2v2'?' active':''}" onclick="setMatchType('2v2')">2 vs 2</button>
+      <button class="type-btn${matchType==='ffa'?' active':''}" onclick="setMatchType('ffa')">Todos contra Todos</button>
+      <button class="type-btn${matchType==='2v2'?' active':''}" onclick="setMatchType('2v2')">Equipos</button>
     </div>`;
 
   html += '<div id="match-slots">';
 
   if(matchType==='ffa') {
-    html += '<div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:8px;">Elegí resultado</div>';
 
     const slots = window.ffaSlots;
 
