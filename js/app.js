@@ -16,6 +16,7 @@ function save() {
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 
 let matchType = 'ffa';
+let editingDeckId = null;
 let tournamentSortKey = 'wr';
 let activeTournamentId = null;
 let editingMatchId = null;
@@ -94,34 +95,32 @@ function renderDecks() {
         <div style="font-size:11px;color:var(--color-text-secondary);margin-bottom:6px;">${pname}</div>
         <div class="pip-row">${(d.colors||[]).map(c=>`<div class="pip pip-${c}">${c}</div>`).join('')}</div>
         <div class="stat-mini">${played} partidas ${played?`<span class="win-badge">${wr}% WR</span>`:''}</div>
-        <div style="margin-top:8px;"><button class="btn btn-sm btn-danger" onclick="deleteDeck('${d.id}')">eliminar</button></div>
+        <div style="margin-top:8px;display:flex;gap:6px;"><button class="btn btn-sm" onclick="startEditDeck('${d.id}')">editar</button><button class="btn btn-sm btn-danger" onclick="deleteDeck('${d.id}')">eliminar</button></div>
       </div>`;
     });
     html += '</div>';
   } else {
     html += '<div class="empty-state">No hay mazos todavía.</div>';
   }
-  html += '<div class="section-title">Agregar mazo</div><div class="card-box">';
+  const ed = editingDeckId ? DB.decks.find(d => d.id === editingDeckId) : null;
+  html += `<div class="section-title" style="display:flex;align-items:center;justify-content:space-between;">${ed ? 'Editar mazo' : 'Agregar mazo'}${ed ? `<button class="btn btn-sm" onclick="cancelEditDeck()">Cancelar</button>` : ''}</div><div class="card-box">`;
   html += `<div class="form-row">
-    <div class="form-group" style="margin-bottom:0;"><label>Dueño</label><select id="d-player" onchange="rerenderDeckForm()">${playerOptions()}</select></div>
-    <div class="form-group" style="margin-bottom:0;"><label>Nombre del mazo</label><input type="text" id="d-name" placeholder="Ej: Control Azul"></div>
+    <div class="form-group" style="margin-bottom:0;"><label>Dueño</label><select id="d-player" onchange="rerenderDeckForm()">${playerOptions(ed ? ed.playerId : '')}</select></div>
+    <div class="form-group" style="margin-bottom:0;"><label>Nombre del mazo</label><input type="text" id="d-name" placeholder="Ej: Control Azul" value="${ed ? ed.name : ''}"></div>
   </div>
   <div class="form-group" style="margin-top:10px;position:relative;">
     <label>Comandante <span style="font-size:11px;color:var(--color-text-secondary);">(buscá por nombre)</span></label>
-    <input type="text" id="d-commander" placeholder="Ej: Atraxa, Praetors' Voice" autocomplete="off" oninput="onCommanderInput()">
+    <input type="text" id="d-commander" placeholder="Ej: Atraxa, Praetors' Voice" autocomplete="off" oninput="onCommanderInput()" value="${ed ? ed.commander || '' : ''}">
     <div id="commander-suggestions" style="display:none;position:absolute;z-index:9999;background:var(--color-background-primary, #fff);border:1px solid var(--color-border-secondary);border-radius:var(--border-radius-md);width:100%;max-height:220px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,0.18);top:calc(100% + 2px);left:0;backdrop-filter:none;opacity:1;"></div>
   </div>
-  <div class="form-group" style="margin-bottom:0;"><label>Colores <span id="colors-auto-hint" style="font-size:11px;color:var(--color-text-success);display:none;">✓ detectados automáticamente</span><span id="colors-manual-hint" style="font-size:11px;color:var(--color-text-secondary);"> · seleccioná un comandante primero</span></label>
-    <div class="colors-row" id="color-picker" style="pointer-events:none;opacity:0.45;">
-      <label class="color-toggle"><input type="checkbox" value="W" disabled><div class="color-dot W">W</div></label>
-      <label class="color-toggle"><input type="checkbox" value="U" disabled><div class="color-dot U">U</div></label>
-      <label class="color-toggle"><input type="checkbox" value="B" disabled><div class="color-dot B">B</div></label>
-      <label class="color-toggle"><input type="checkbox" value="R" disabled><div class="color-dot R">R</div></label>
-      <label class="color-toggle"><input type="checkbox" value="G" disabled><div class="color-dot G">G</div></label>
-      <label class="color-toggle"><input type="checkbox" value="C" disabled><div class="color-dot C">C</div></label>
+  <div class="form-group" style="margin-bottom:0;"><label>Colores <span id="colors-auto-hint" style="font-size:11px;color:var(--color-text-success);display:none;">✓ detectados automáticamente</span><span id="colors-manual-hint" style="font-size:11px;color:var(--color-text-secondary);">${ed ? '' : ' · seleccioná un comandante primero'}</span></label>
+    <div class="colors-row" id="color-picker" style="pointer-events:none;opacity:${ed ? '1' : '0.45'};">
+      ${['W','U','B','R','G','C'].map(c => `<label class="color-toggle"><input type="checkbox" value="${c}"${ed && (ed.colors||[]).includes(c) ? ' checked' : ''} disabled><div class="color-dot ${c}">${c}</div></label>`).join('')}
     </div>
   </div>
-  <div style="margin-top:12px;"><button class="btn btn-gold" onclick="addDeck()">Agregar mazo</button></div>`;
+  <div style="margin-top:12px;display:flex;gap:8px;">
+    <button class="btn btn-gold" onclick="${ed ? 'saveEditDeck()' : 'addDeck()'}">${ed ? 'Guardar cambios' : 'Agregar mazo'}</button>
+  </div>`;
   html += '</div>';
   el.innerHTML = html;
 }
@@ -234,6 +233,39 @@ function deleteDeck(id) {
   if(!confirm('¿Eliminar este mazo?')) return;
   DB.decks = DB.decks.filter(d=>d.id!==id);
   DB.matches = DB.matches.filter(m=>!m.slots||!m.slots.every(s=>s.deckId===id));
+  save(); renderAll();
+}
+
+function startEditDeck(id) {
+  editingDeckId = id;
+  renderDecks();
+  // Scroll to form
+  setTimeout(() => {
+    const el = document.querySelector('#tab-decks .card-box:last-child');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 50);
+}
+
+function cancelEditDeck() {
+  editingDeckId = null;
+  renderDecks();
+}
+
+function saveEditDeck() {
+  const pid = document.getElementById('d-player').value;
+  const name = document.getElementById('d-name').value.trim();
+  const commander = document.getElementById('d-commander').value.trim();
+  if (!pid) { alert('Seleccioná un jugador.'); return; }
+  if (!name) { alert('Ingresá un nombre para el mazo.'); return; }
+  const colors = [...document.querySelectorAll('#color-picker input:checked')].map(c => c.value);
+  if (!colors.length) { alert('Seleccioná al menos un color (buscá el comandante para autodetectarlos).'); return; }
+  const deck = DB.decks.find(d => d.id === editingDeckId);
+  if (!deck) return;
+  deck.playerId = pid;
+  deck.name = name;
+  deck.commander = commander;
+  deck.colors = colors;
+  editingDeckId = null;
   save(); renderAll();
 }
 
@@ -923,6 +955,9 @@ window.updateFFASlotPlayer = updateFFASlotPlayer;
 window.updateFFASlotDeck = updateFFASlotDeck;
 
 window.addDeck = addDeck;
+window.startEditDeck = startEditDeck;
+window.cancelEditDeck = cancelEditDeck;
+window.saveEditDeck = saveEditDeck;
 window.deleteDeck = deleteDeck;
 window.rerenderDeckForm = rerenderDeckForm;
 window.onCommanderInput = onCommanderInput;
@@ -945,3 +980,4 @@ window.removeTournamentPlayer = removeTournamentPlayer;
 window.createTournament = createTournament;
 window.closeTournament = closeTournament;
 window.deleteTournament = deleteTournament;
+
