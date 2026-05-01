@@ -456,8 +456,9 @@ function renderMatch() {
     </div>
   </div>
 
-  <div style="margin-top:12px;">
-    <button class="btn btn-gold" onclick="saveMatch()">Guardar partida</button>
+  <div style="margin-top:12px;display:flex;gap:8px;align-items:center;">
+    <button class="btn btn-gold" onclick="saveMatch()">${editingMatchId ? 'Guardar cambios' : 'Guardar partida'}</button>
+    ${editingMatchId ? `<button class="btn" onclick="cancelEditMatch()">Cancelar</button>` : ''}
   </div>
 
   </div>`;
@@ -607,43 +608,67 @@ function editMatch(id) {
   editingMatchId = id;
   matchType = m.type;
 
-  renderMatch();
+  if (m.type === 'ffa') {
+    // Load slots state from match data
+    window.ffaSlots = m.slots.map(s => ({ playerId: s.playerId, deckId: s.deckId, won: s.won, draw: s.draw }));
+    // Store winning index / draw so renderMatch can pre-check the radio
+    window._editFfaWin = m.slots.findIndex(s => s.won);
+    window._editFfaDraw = m.slots.some(s => s.draw);
+  } else {
+    // Rebuild teamConfig from match slots
+    const teams = [...new Set(m.slots.map(s => s.team))].sort((a,b)=>a-b);
+    const playersPerTeam = Math.max(...teams.map(t => m.slots.filter(s => s.team === t).length));
+    window.teamConfig = { numTeams: teams.length, playersPerTeam };
+    window.teamSlots = teams.map(t => {
+      const tSlots = m.slots.filter(s => s.team === t);
+      return Array.from({ length: playersPerTeam }, (_, i) =>
+        tSlots[i] ? { playerId: tSlots[i].playerId, deckId: tSlots[i].deckId } : { playerId: '', deckId: '' }
+      );
+    });
+    window._editTeamWin = m.slots.find(s => s.won)?.team ?? null;
+    window._editTeamDraw = m.slots.some(s => s.draw);
+  }
 
-  // cargar datos después de render
+  // Store date and tournament for after render
+  window._editMatchDate = m.date;
+  window._editMatchTournament = m.tournamentId || '';
+
+  renderMatch();
+  showTab('match');
+
+  // Set date, tournament and radios after DOM is ready
   setTimeout(() => {
-    document.getElementById('m-date').value = m.date;
+    const dateEl = document.getElementById('m-date');
+    if (dateEl) dateEl.value = window._editMatchDate;
+    const tEl = document.getElementById('m-tournament');
+    if (tEl && window._editMatchTournament) tEl.value = window._editMatchTournament;
 
     if (m.type === 'ffa') {
-      m.slots.forEach((s, i) => {
-        document.getElementById(`ms-p${i}`).value = s.playerId;
-        updateMatchDeck(i);
-        document.getElementById(`ms-d${i}`).value = s.deckId;
-
-        if (s.won) {
-          document.querySelector(`input[name="ffa-win"][value="${i}"]`).checked = true;
-        }
-      });
-    } else {
-      const winTeam = m.slots.find(s => s.won)?.team;
-
-      if (winTeam) {
-        document.querySelector(`input[name="team-win"][value="${winTeam}"]`).checked = true;
+      if (window._editFfaDraw) {
+        const r = document.querySelector('input[name="ffa-result"][value="draw"]');
+        if (r) r.checked = true;
+      } else if (window._editFfaWin >= 0) {
+        const r = document.querySelector(`input[name="ffa-result"][value="win-${window._editFfaWin}"]`);
+        if (r) r.checked = true;
       }
-
-      const grouped = { t1: [], t2: [] };
-      m.slots.forEach(s => grouped[s.team].push(s));
-
-      ['t1','t2'].forEach(t => {
-        grouped[t].forEach((s, i) => {
-          document.getElementById(`ms-${t}p${i}`).value = s.playerId;
-          updateMatchDeck2(t, i);
-          document.getElementById(`ms-${t}d${i}`).value = s.deckId;
-        });
-      });
+    } else {
+      if (window._editTeamDraw) {
+        const r = document.querySelector('input[name="team-result"][value="draw"]');
+        if (r) r.checked = true;
+      } else if (window._editTeamWin !== null) {
+        const r = document.querySelector(`input[name="team-result"][value="${window._editTeamWin}"]`);
+        if (r) r.checked = true;
+      }
     }
-
-    showTab('match');
   }, 0);
+}
+
+function cancelEditMatch() {
+  editingMatchId = null;
+  window.ffaSlots = Array.from({ length: 4 }, () => ({ playerId: '', deckId: '' }));
+  window.teamConfig = { numTeams: 2, playersPerTeam: 2 };
+  initTeamSlots();
+  renderMatch();
 }
 
 function deleteMatch(id) {
@@ -971,6 +996,7 @@ window.updateMatchDeck = updateMatchDeck;
 window.updateMatchDeck2 = updateMatchDeck2;
 window.saveMatch = saveMatch;
 window.editMatch = editMatch;
+window.cancelEditMatch = cancelEditMatch;
 window.deleteMatch = deleteMatch;
 
 window.sortLeaderboard = sortLeaderboard;
