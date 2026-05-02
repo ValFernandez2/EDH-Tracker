@@ -854,6 +854,34 @@ function renderTournament() {
   renderTournamentPlayersList();
 }
 
+function renderPlayers() {
+  const el = document.getElementById('tab-players');
+
+  let html = `<div class="card-box">
+    <div class="section-title">Jugadores</div>`;
+
+  if(DB.players.length) {
+    html += DB.players.map(p=>`
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:0.5px solid var(--color-border-tertiary);">
+        <span style="font-size:14px;">${p.name}</span>
+        <button class="btn btn-sm btn-danger" onclick="deletePlayer('${p.id}')">eliminar</button>
+      </div>
+    `).join('');
+  } else {
+    html += '<div class="empty-state">No hay jugadores todavía.</div>';
+  }
+
+  html += `
+    <div style="margin-top:12px;display:flex;gap:8px;">
+      <input type="text" id="new-player-name" placeholder="Nombre del jugador" style="flex:1;">
+      <button class="btn btn-gold" onclick="addPlayer()">Agregar</button>
+    </div>
+  </div>`;
+
+  el.innerHTML = html;
+}
+
+
 window._tPlayers = [];
 function addTournamentPlayer() {
   const sel = document.getElementById('t-addplayer');
@@ -892,36 +920,11 @@ function deleteTournament(id) {
   save(); renderAll();
 }
 
-function showPlayersModal() {
-  const ov = document.getElementById('modal-overlay');
-  const box = document.getElementById('modal-box');
-  ov.style.display = 'flex';
-  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-    <div style="font-size:15px;font-weight:500;">Jugadores</div>
-    <button class="btn btn-sm" onclick="hideModal()">Cerrar</button>
-  </div>`;
-  if(DB.players.length) {
-    html += DB.players.map(p=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:0.5px solid var(--color-border-tertiary);">
-      <span style="font-size:14px;">${p.name}</span>
-      <button class="btn btn-sm btn-danger" onclick="deletePlayer('${p.id}')">eliminar</button>
-    </div>`).join('');
-  } else {
-    html += '<div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:12px;">No hay jugadores todavía.</div>';
-  }
-  html += `<div style="margin-top:12px;display:flex;gap:8px;">
-    <input type="text" id="new-player-name" placeholder="Nombre del jugador" style="flex:1;">
-    <button class="btn btn-gold" onclick="addPlayer()">Agregar</button>
-  </div>`;
-  box.innerHTML = html;
-}
-function hideModal() {
-  document.getElementById('modal-overlay').style.display = 'none';
-}
 function addPlayer() {
   const name = document.getElementById('new-player-name').value.trim();
   if(!name) return;
   DB.players.push({ id: uid(), name });
-  save(); showPlayersModal(); renderAll();
+  save(); renderAll();
 }
 function deletePlayer(id) {
   if(!confirm('¿Eliminar jugador? Sus mazos y partidas también se eliminarán.')) return;
@@ -929,14 +932,14 @@ function deletePlayer(id) {
   DB.decks = DB.decks.filter(d=>d.playerId!==id);
   DB.matches = DB.matches.map(m=>({ ...m, slots: (m.slots||[]).filter(s=>s.playerId!==id) })).filter(m=>m.slots.length>0);
   DB.tournaments = DB.tournaments.map(t=>({ ...t, playerIds: t.playerIds.filter(p=>p!==id) }));
-  save(); showPlayersModal(); renderAll();
+  save(); renderAll();
 }
 
 function showTab(t) {
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('tab-'+t).classList.add('active');
-  const tabs = ['decks','match','history','stats','tournament'];
+  const tabs = ['decks','match','history','stats','tournament','players'];
   document.querySelectorAll('.nav-btn')[tabs.indexOf(t)].classList.add('active');
 }
 
@@ -946,6 +949,7 @@ function renderAll() {
   renderHistory();
   renderStats();
   renderTournament();
+  renderPlayers();
 }
 
 
@@ -967,8 +971,6 @@ async function init() {
 init(); 
 
 // Exponer funciones al HTML
-window.showPlayersModal = showPlayersModal;
-window.hideModal = hideModal;
 window.addPlayer = addPlayer;
 window.deletePlayer = deletePlayer;
 
