@@ -15,6 +15,21 @@ function save() {
   saveToCloud(DB);
 }
 
+function normalizeDB() {
+  DB.players = DB.players || [];
+  DB.decks = DB.decks || [];
+  DB.matches = DB.matches || [];
+  DB.tournaments = DB.tournaments || [];
+  DB.sessions = DB.sessions || [];
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+
+  const [year, month, day] = dateStr.split('-');
+  return `${day}/${month}/${year.slice(2)}`;
+}
+
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 
 let matchType = 'ffa';
@@ -29,6 +44,14 @@ if (!window.ffaSlots || typeof window.ffaSlots === "number") {
     deckId: ""
   }));
 }
+let historyFilters = {
+  playerId: "",
+  fromDate: "",
+  toDate: "",
+  sessionId: "",
+  tournamentId: "",
+  playgroupId: ""
+};
 
 // Team match config
 window.teamConfig = window.teamConfig || { numTeams: 2, playersPerTeam: 2 };
@@ -50,16 +73,25 @@ function deckName(id) {
 }
 function deckOf(id) { return DB.decks.find(d=>d.id===id); }
 
-function playerOptions(selected) {
+function playerOptions(selected, excludeIds = []) {
   if(!DB.players.length) return '<option value="">— agregá jugadores primero —</option>';
+
+  const available = DB.players.filter(p => !excludeIds.includes(p.id) || p.id === selected);
+
   return '<option value="">Seleccionar jugador</option>' +
-    DB.players.map(p=>`<option value="${p.id}"${p.id===selected?' selected':''}>${p.name}</option>`).join('');
+    available.map(p=>`
+      <option value="${p.id}" ${p.id===selected?'selected':''}>
+        ${p.name}
+      </option>
+    `).join('');
 }
 
 function deckOptions(pid, selected, filter = "") {
   if(!pid) return '<option value="">— elegí jugador primero —</option>';
 
-  let decks = DB.decks;
+  let decks = DB.decks.filter(d => 
+  (!excludeDeckIds.includes(d.id) || d.id === selected)
+  );
 
   if(filter) {
     const f = filter.toLowerCase();
@@ -315,6 +347,11 @@ function updateFFASlotDeck(i, value) {
 }
 
 function startSession() {
+  if (DB.sessions.some(s => !s.endedAt)) {
+    alert("Ya hay una sesión activa");
+    return;
+  }
+
   const name = prompt("Nombre de la sesión (ej: Viernes EDH)");
   if (!name) return;
 
@@ -408,6 +445,9 @@ function renderFFA() {
   let html = '';
   const slots = window.ffaSlots;
 
+  const usedPlayers = slots.map(s => s.playerId).filter(Boolean);
+  const usedDecks = slots.map(s => s.deckId).filter(Boolean);
+
   for(let i=0;i<slots.length;i++) {
     const slot = slots[i];
 
@@ -426,7 +466,7 @@ function renderFFA() {
       ` : ''}
 
       <select onchange="updateFFASlotPlayer(${i}, this.value)">
-        ${playerOptions(slot.playerId)}
+      ${playerOptions(slot.playerId, usedPlayers.filter(id => id !== slot.playerId))}
       </select>
 
       <input 
@@ -438,10 +478,12 @@ function renderFFA() {
       >
 
       <datalist id="decks-${i}">
-        ${DB.decks.map(d=>{
-          const owner = playerName(d.playerId);
-          const commander = d.commander || '—';
-          return `<option value="${d.name} - ${commander} (${owner})"></option>`;
+        ${DB.decks
+        .filter(d => !usedDecks.includes(d.id) || d.id === slot.deckId)
+        .map(d=>{
+        const owner = playerName(d.playerId);
+        const commander = d.commander || '—';
+        return `<option value="${d.name} - ${commander} (${owner})"></option>`;
         }).join('')}
       </datalist>
 
@@ -471,6 +513,9 @@ function renderTeams() {
 
   const { numTeams, playersPerTeam } = window.teamConfig;
   const slots = window.teamSlots;
+
+  const usedPlayers = window.teamSlots.flat().map(s=>s.playerId).filter(Boolean);
+  const usedDecks = window.teamSlots.flat().map(s=>s.deckId).filter(Boolean);
 
   html += `<div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
     <div style="display:flex;align-items:center;gap:6px;">
@@ -511,15 +556,18 @@ function renderTeams() {
 
       html += `<div class="player-slot" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px;">
         <select onchange="updateTeamSlotPlayer(${t},${i},this.value)">
-          ${playerOptions(slot.playerId)}
+          ${playerOptions(slot.playerId,usedPlayers.filter(id => id !== slot.playerId))}
         </select>
         <input list="team-decks-${t}-${i}" id="team-deck-input-${t}-${i}"
           placeholder="Seleccionar mazo" value="${deckLabel}"
           onchange="updateTeamSlotDeck(${t},${i},this.value)">
         <datalist id="team-decks-${t}-${i}">
-          ${DB.decks.map(d=>{
+          ${DB.decks
+            .filter(d => !usedDecks.includes(d.id) || d.id === slot.deckId)
+            .map(d=>{
             const owner = playerName(d.playerId);
-            return `<option value="${d.name} - ${d.commander||'—'} (${owner})"></option>`;
+            const commander = d.commander || '—';
+            return `<option value="${d.name} - ${commander} (${owner})"></option>`;
           }).join('')}
         </datalist>
       </div>`;
@@ -681,22 +729,130 @@ function saveMatch() {
 function renderHistory() {
   const el = document.getElementById('tab-history');
   if(!DB.matches.length) { el.innerHTML = '<div class="empty-state">No hay partidas registradas todavía.</div>'; return; }
-  const sorted = [...DB.matches].sort((a,b)=>(b.date || '').localeCompare(a.date || ''));
   let html = '';
+  html += `
+  <div class="card-box" style="margin-bottom:10px;">
+    <div style="font-size:13px;font-weight:500;margin-bottom:8px;color:var(--color-text-secondary);">
+    Filtrar
+     </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+
+    <div style="display:flex;flex-direction:column;">
+  <label>Jugador</label>
+  <select onchange="setHistoryFilter('playerId', this.value)">
+    <option value="">Todos</option>
+    ${DB.players.map(p=>`
+      <option value="${p.id}" ${p.id === historyFilters.playerId ? 'selected' : ''}>
+        ${p.name}
+      </option>
+    `).join('')}
+  </select>
+</div>
+    <div>
+      <label>Desde</label>
+      <input type="date" value="${historyFilters.fromDate}" onchange="setHistoryFilter('fromDate', this.value)">
+    </div>
+
+    <div>
+      <label>Hasta</label>
+      <input type="date" value="${historyFilters.toDate}" onchange="setHistoryFilter('toDate', this.value)">
+    </div>
+
+    <div>
+      <label>Sesión</label>
+      <select onchange="setHistoryFilter('sessionId', this.value)">
+      <option value="">Todas</option>
+      ${DB.sessions.map(s=>`<option value="${s.id}" ${s.id === historyFilters.sessionId ? 'selected' : ''}>${s.name}
+      </option>`).join('')}
+      </select>
+    </div>
+
+    <div>
+      <label>Torneo</label>
+      <select onchange="setHistoryFilter('tournamentId', this.value)">
+        <option value="">Todos</option>
+        ${DB.tournaments.map(t=>`
+        <option value="${t.id}" ${t.id === historyFilters.tournamentId ? 'selected' : ''}>
+        ${t.name}
+        </option>
+        `).join('')}
+        <option value="none" ${historyFilters.tournamentId === 'none' ? 'selected' : ''}>
+        Sin torneo
+        </option>
+      </select>
+    </div>
+
+    <button class="btn btn-sm" onclick="clearHistoryFilters()">Limpiar</button>
+
+    </div>
+  </div>
+  `;
+  const filtered = applyHistoryFilters(DB.matches);
+  const sorted = [...filtered].sort((a,b)=>(b.date || '').localeCompare(a.date || ''));
   sorted.forEach(m => {
     const t = m.tournamentId ? DB.tournaments.find(t=>t.id===m.tournamentId) : null;
+    const session = m.sessionId ? DB.sessions.find(s => s.id === m.sessionId): null;
     html += `<div class="history-item">
-      <div class="history-date">${m.date.slice(5).replace('-','/')}</div>
-      <div class="history-type">${m.type==='ffa'?'FFA':'2v2'}</div>
+      <div class="history-date">${formatDate(m.date)}</div>
+      <div class="history-type">${m.type==='ffa'?'Free':'Team'}</div>
       ${t?`<span class="tag-tournament">${t.name}</span>`:''}
       <div style="flex:1;min-width:0;">
         ${m.slots.map(s=>`<span style="font-size:12px;margin-right:8px;${s.won?'color:var(--color-text-success);font-weight:500;':'color:var(--color-text-secondary);'}">${playerName(s.playerId)}: ${deckName(s.deckId)}${s.won?' ✓':''}</span>`).join('')}
       </div>
+      ${session ? `<span class="tag-session">${session.name}</span>` : ''}
       <button class="btn btn-sm" onclick="editMatch('${m.id}')">editar</button>
       <button class="btn btn-sm btn-danger" onclick="deleteMatch('${m.id}')">×</button>
     </div>`;
   });
   el.innerHTML = html;
+}
+
+function applyHistoryFilters(matches) {
+  return matches.filter(m => {
+
+    // 📅 Fecha
+    if (historyFilters.fromDate && m.date < historyFilters.fromDate) return false;
+    if (historyFilters.toDate && m.date > historyFilters.toDate) return false;
+
+    // 👤 Jugador
+    if (historyFilters.playerId) {
+      const played = m.slots?.some(s => s.playerId === historyFilters.playerId);
+      if (!played) return false;
+    }
+
+    // 🧾 Sesión
+    if (historyFilters.sessionId) {
+      if (m.sessionId !== historyFilters.sessionId) return false;
+    }
+
+    // 🏆 Torneo (nuevo sistema)
+    if (historyFilters.tournamentId) {
+      if (historyFilters.tournamentId === "none") {
+        if (m.tournamentId) return false;
+      } else {
+        if (m.tournamentId !== historyFilters.tournamentId) return false;
+      }
+    }
+
+    return true;
+  });
+}
+
+function setHistoryFilter(key, value) {
+  historyFilters[key] = value;
+  renderHistory();
+}
+
+function clearHistoryFilters() {
+  historyFilters = {
+    playerId: "",
+    fromDate: "",
+    toDate: "",
+    sessionId: "",
+    tournament: "all",
+    playgroupId: ""
+  };
+  renderHistory();
 }
 
 function editMatch(id) {
@@ -1063,12 +1219,12 @@ async function init() {
     window.DB = cloud;
   }
 
-  DB.matches.forEach(m => {
-  if (!m.date) {
-    m.date = new Date(m.createdAt || Date.now()).toISOString().slice(0,10);
+  normalizeDB();
+
+  const activeSession = DB.sessions.find(s => !s.endedAt);
+  if (activeSession) {
+  currentSessionId = activeSession.id;
   }
-  });
-  save();
 
   renderAll();
 }
@@ -1097,6 +1253,9 @@ window.selectCommander = selectCommander;
 
 window.startSession = startSession;
 window.endSession = endSession;
+
+window.setHistoryFilter = setHistoryFilter;
+window.clearHistoryFilters = clearHistoryFilters;
 
 window.setMatchType = setMatchType;
 window.updateTeamConfig = updateTeamConfig;
