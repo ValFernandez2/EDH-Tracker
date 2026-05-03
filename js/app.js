@@ -657,6 +657,7 @@ function saveMatch() {
   const newMatch = {
     id: editingMatchId || uid(),
     type: matchType,
+    date,
     createdAt: Date.now(),
     playgroupId: null,     
     sessionId: currentSessionId,   
@@ -680,7 +681,7 @@ function saveMatch() {
 function renderHistory() {
   const el = document.getElementById('tab-history');
   if(!DB.matches.length) { el.innerHTML = '<div class="empty-state">No hay partidas registradas todavía.</div>'; return; }
-  const sorted = [...DB.matches].sort((a,b)=>b.date.localeCompare(a.date));
+  const sorted = [...DB.matches].sort((a,b)=>(b.date || '').localeCompare(a.date || ''));
   let html = '';
   sorted.forEach(m => {
     const t = m.tournamentId ? DB.tournaments.find(t=>t.id===m.tournamentId) : null;
@@ -1061,6 +1062,13 @@ async function init() {
   if (cloud) {
     window.DB = cloud;
   }
+
+  DB.matches.forEach(m => {
+  if (!m.date) {
+    m.date = new Date(m.createdAt || Date.now()).toISOString().slice(0,10);
+  }
+  });
+  save();
 
   renderAll();
 }
