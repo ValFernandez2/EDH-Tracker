@@ -531,31 +531,26 @@ function renderFFA() {
         <button class="btn btn-sm btn-danger" onclick="removeFFASlot(${i})">×</button>
       ` : ''}
 
-      <select onchange="updateFFASlotPlayer(${i}, this.value)">
-      ${playerOptions(slot.playerId, usedPlayers.filter(id => id !== slot.playerId))}
+      <select 
+        style="flex:0 0 160px;" 
+        onchange="updateFFASlotPlayer(${i}, this.value)">
+        ${playerOptions(slot.playerId, usedPlayers.filter(id => id !== slot.playerId))}
       </select>
 
-      <div style="position:relative;">
-      <input 
-      type="text"
-      id="deck-input-${i}"
-      placeholder="Buscar mazo"
-      value="${deckLabel}"
-      oninput="onDeckInput(${i}, this.value)"
-      autocomplete="off"
-      >
-      <div id="deck-suggestions-${i}" class="deck-suggestions"></div>
+      <div style="position:relative; flex:1;">
+        <input 
+          type="text"
+          style="width:100%;"
+          id="deck-input-${i}"
+          placeholder="Buscar mazo"
+          value="${deckLabel}"
+          oninput="onDeckInput(${i}, this.value)"
+          onclick="this.select()"
+          onfocus="this.select()"
+          autocomplete="off"
+        >
+        <div id="deck-suggestions-${i}" class="deck-suggestions"></div>
       </div>
-
-      <datalist id="decks-${i}">
-        ${DB.decks
-        .filter(d => !usedDecks.includes(d.id) || d.id === slot.deckId)
-        .map(d=>{
-        const owner = playerName(d.playerId);
-        const commander = d.commander || '—';
-        return `<option value="${d.name} - ${commander} (${owner})"></option>`;
-        }).join('')}
-      </datalist>
 
       <label class="won-toggle">
         <input type="radio" name="ffa-result" value="win-${i}"> ganó
@@ -635,19 +630,11 @@ function renderTeams() {
       placeholder="Buscar mazo"
       value="${deckLabel}"
       oninput="onDeckInput(${i}, this.value)"
+      onclick="this.select()"
       autocomplete="off"
       >
       <div id="deck-suggestions-${i}" class="deck-suggestions"></div>
       </div>
-        <datalist id="team-decks-${t}-${i}">
-          ${DB.decks
-            .filter(d => !usedDecks.includes(d.id) || d.id === slot.deckId)
-            .map(d=>{
-            const owner = playerName(d.playerId);
-            const commander = d.commander || '—';
-            return `<option value="${d.name} - ${commander} (${owner})"></option>`;
-          }).join('')}
-        </datalist>
       </div>`;
     }
 
