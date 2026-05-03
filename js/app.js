@@ -168,11 +168,21 @@ let _commanderCards = [];
 
 // Close dropdown when clicking outside
 document.addEventListener('mousedown', e => {
+
+  // commander
   const sug = document.getElementById('commander-suggestions');
   const inp = document.getElementById('d-commander');
   if (sug && inp && !sug.contains(e.target) && e.target !== inp) {
     sug.style.display = 'none';
   }
+
+  // decks
+  document.querySelectorAll('[id^="deck-suggestions-"]').forEach(el => {
+    if (!el.contains(e.target)) {
+      el.style.display = 'none';
+    }
+  });
+
 });
 
 function onCommanderInput() {
@@ -323,6 +333,62 @@ function addFFASlot() {
   renderMatch();
 }
 
+function onDeckInput(i, value) {
+  const el = document.getElementById(`deck-suggestions-${i}`);
+  if (!el) return;
+
+  const q = value.toLowerCase();
+
+  if (q.length < 1) {
+    el.style.display = 'none';
+    return;
+  }
+
+  const matches = DB.decks.filter(d => {
+    const owner = playerName(d.playerId);
+    return (
+      d.name.toLowerCase().includes(q) ||
+      (d.commander || '').toLowerCase().includes(q) ||
+      owner.toLowerCase().includes(q)
+    );
+  }).slice(0, 6);
+
+  if (!matches.length) {
+    el.innerHTML = `<div style="padding:6px;font-size:12px;">Sin resultados</div>`;
+    el.style.display = 'block';
+    return;
+  }
+
+  el.innerHTML = matches.map(d => {
+    const owner = playerName(d.playerId);
+    return `
+      <div 
+        onclick="selectDeck(${i}, '${d.id}')"
+        style="padding:6px;cursor:pointer;"
+      >
+        ${d.name} - ${d.commander || '—'} (${owner})
+      </div>
+    `;
+  }).join('');
+
+  el.style.display = 'block';
+}
+
+function selectDeck(i, deckId) {
+  const d = deckOf(deckId);
+  if (!d) return;
+
+  const label = `${d.name} - ${d.commander || '—'} (${playerName(d.playerId)})`;
+
+  window.ffaSlots[i].deckId = deckId;
+
+  const input = document.getElementById(`deck-input-${i}`);
+  if (input) input.value = label;
+
+  const el = document.getElementById(`deck-suggestions-${i}`);
+  if (el) el.style.display = 'none';
+}
+
 function removeFFASlot(index) {
   if(window.ffaSlots.length <= 1) return;
 
@@ -469,13 +535,17 @@ function renderFFA() {
       ${playerOptions(slot.playerId, usedPlayers.filter(id => id !== slot.playerId))}
       </select>
 
+      <div style="position:relative;">
       <input 
-        list="decks-${i}" 
-        id="deck-input-${i}" 
-        placeholder="Seleccionar mazo"
-        value="${deckLabel}"
-        onchange="updateFFASlotDeck(${i}, this.value)"
+      type="text"
+      id="deck-input-${i}"
+      placeholder="Buscar mazo"
+      value="${deckLabel}"
+      oninput="onDeckInput(${i}, this.value)"
+      autocomplete="off"
       >
+      <div id="deck-suggestions-${i}" class="deck-suggestions"></div>
+      </div>
 
       <datalist id="decks-${i}">
         ${DB.decks
@@ -550,17 +620,25 @@ function renderTeams() {
       const slot = tSlots[i] || { playerId: '', deckId: '' };
 
       const deckLabel = slot.deckId ? (() => {
-        const d = deckOf(slot.deckId);
-        return d ? `${d.name} - ${d.commander || '—'} (${playerName(d.playerId)})` : '';
+      const d = deckOf(slot.deckId);
+      return d ? `${d.name} - ${d.commander || '—'} (${playerName(d.playerId)})` : '';
       })() : '';
 
       html += `<div class="player-slot" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px;">
         <select onchange="updateTeamSlotPlayer(${t},${i},this.value)">
           ${playerOptions(slot.playerId,usedPlayers.filter(id => id !== slot.playerId))}
         </select>
-        <input list="team-decks-${t}-${i}" id="team-deck-input-${t}-${i}"
-          placeholder="Seleccionar mazo" value="${deckLabel}"
-          onchange="updateTeamSlotDeck(${t},${i},this.value)">
+        <div style="position:relative;">
+      <input 
+      type="text"
+      id="deck-input-${i}"
+      placeholder="Buscar mazo"
+      value="${deckLabel}"
+      oninput="onDeckInput(${i}, this.value)"
+      autocomplete="off"
+      >
+      <div id="deck-suggestions-${i}" class="deck-suggestions"></div>
+      </div>
         <datalist id="team-decks-${t}-${i}">
           ${DB.decks
             .filter(d => !usedDecks.includes(d.id) || d.id === slot.deckId)
@@ -1247,6 +1325,8 @@ window.startEditDeck = startEditDeck;
 window.cancelEditDeck = cancelEditDeck;
 window.saveEditDeck = saveEditDeck;
 window.deleteDeck = deleteDeck;
+window.onDeckInput = onDeckInput;
+window.selectDeck = selectDeck;
 window.rerenderDeckForm = rerenderDeckForm;
 window.onCommanderInput = onCommanderInput;
 window.selectCommander = selectCommander;
