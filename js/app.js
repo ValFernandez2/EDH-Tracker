@@ -44,6 +44,11 @@ if (!window.ffaSlots || typeof window.ffaSlots === "number") {
     deckId: ""
   }));
 }
+// Deck sort/filter state
+let deckSort = 'name';       // 'name','commander','owner','recent','played','wr'
+let deckSearch = '';
+let deckFilters = { owner: '', minPlayed: '', maxPlayed: '', minWR: '', maxWR: '', fromDate: '', toDate: '' };
+
 let historyFilters = {
   playerId: "",
   fromDate: "",
@@ -114,28 +119,129 @@ function deckOptions(pid, selected, filter = "") {
     }).join('');
 }
 
+function getDeckStats(d) {
+  const matches = DB.matches.filter(m => m.slots && m.slots.some(s => s.deckId === d.id));
+  const played = matches.length;
+  const wins = matches.filter(m => m.slots.some(s => s.deckId === d.id && s.won)).length;
+  const wr = played ? Math.round(wins / played * 100) : 0;
+  const lastMatch = matches.sort((a,b) => (b.date||'').localeCompare(a.date||''))[0];
+  return { played, wins, wr, lastDate: lastMatch ? lastMatch.date : null };
+}
+
 function renderDecks() {
   const el = document.getElementById('tab-decks');
   let html = '';
-  if(DB.decks.length) {
+
+  // ── Sort & Filter bar ──────────────────────────────────────
+  const hasFilters = Object.values(deckFilters).some(v=>v!=='') || deckSearch !== '';
+  html += `<div class="card-box deck-toolbar">
+    <div class="deck-toolbar-row">
+      <div class="deck-toolbar-group">
+        <span class="toolbar-label">Ordenar</span>
+        ${[
+          ['name','Nombre'],['commander','Comandante'],['owner','Dueño'],
+          ['recent','Recientes'],['played','Partidas'],['wr','Win Rate']
+        ].map(([k,l]) =>
+          `<button class="sort-btn${deckSort===k?' active':''}" onclick="setDeckSort('${k}')">${l}</button>`
+        ).join('')}
+      </div>
+      <div class="deck-toolbar-sep"></div>
+      <div class="deck-toolbar-group">
+        <span class="toolbar-label">Filtrar</span>
+        <input type="text" placeholder="Buscar mazo..." value="${deckSearch}" oninput="setDeckSearch(this.value)" style="width:140px;">
+        <select onchange="setDeckFilter('owner',this.value)" style="width:110px;">
+          <option value="">Todos</option>
+          ${DB.players.map(p=>`<option value="${p.id}"${deckFilters.owner===p.id?' selected':''}>${p.name}</option>`).join('')}
+        </select>
+        <div class="toolbar-range-group">
+          <span class="toolbar-label" style="white-space:nowrap;">Partidas</span>
+          <input type="number" placeholder="mín" min="0" value="${deckFilters.minPlayed}" onchange="setDeckFilter('minPlayed',this.value)" style="width:54px;">
+          <span class="toolbar-sep-dash">–</span>
+          <input type="number" placeholder="máx" min="0" value="${deckFilters.maxPlayed}" onchange="setDeckFilter('maxPlayed',this.value)" style="width:54px;">
+        </div>
+        <div class="toolbar-range-group">
+          <span class="toolbar-label" style="white-space:nowrap;">WR %</span>
+          <input type="number" placeholder="mín" min="0" max="100" value="${deckFilters.minWR}" onchange="setDeckFilter('minWR',this.value)" style="width:54px;">
+          <span class="toolbar-sep-dash">–</span>
+          <input type="number" placeholder="máx" min="0" max="100" value="${deckFilters.maxWR}" onchange="setDeckFilter('maxWR',this.value)" style="width:54px;">
+        </div>
+        <div class="toolbar-range-group">
+          <span class="toolbar-label" style="white-space:nowrap;">Último uso</span>
+          <input type="date" value="${deckFilters.fromDate}" onchange="setDeckFilter('fromDate',this.value)" style="width:120px;">
+          <span class="toolbar-sep-dash">–</span>
+          <input type="date" value="${deckFilters.toDate}" onchange="setDeckFilter('toDate',this.value)" style="width:120px;">
+        </div>
+        ${hasFilters ? `<button class="btn btn-sm" onclick="clearDeckFilters()">Limpiar</button>` : ''}
+      </div>
+    </div>
+  </div>`;
+
+  // ── Build filtered + sorted list ───────────────────────────
+  const totalDecks = DB.decks.length;
+  let decks = DB.decks.map(d => ({ d, ...getDeckStats(d) }));
+
+  // Filter
+  if (deckSearch) {
+    const q = deckSearch.toLowerCase();
+    decks = decks.filter(x => x.d.name.toLowerCase().includes(q));
+  }
+  if (deckFilters.owner) decks = decks.filter(x => x.d.playerId === deckFilters.owner);
+  if (deckFilters.minPlayed !== '') decks = decks.filter(x => x.played >= parseInt(deckFilters.minPlayed));
+  if (deckFilters.maxPlayed !== '') decks = decks.filter(x => x.played <= parseInt(deckFilters.maxPlayed));
+  if (deckFilters.minWR !== '') decks = decks.filter(x => x.wr >= parseInt(deckFilters.minWR));
+  if (deckFilters.maxWR !== '') decks = decks.filter(x => x.wr <= parseInt(deckFilters.maxWR));
+  if (deckFilters.fromDate) decks = decks.filter(x => x.lastDate && x.lastDate >= deckFilters.fromDate);
+  if (deckFilters.toDate) decks = decks.filter(x => x.lastDate && x.lastDate <= deckFilters.toDate);
+
+  // Sort
+  decks.sort((a, b) => {
+    switch(deckSort) {
+      case 'commander': return (a.d.commander||'').localeCompare(b.d.commander||'');
+      case 'owner':     return playerName(a.d.playerId).localeCompare(playerName(b.d.playerId));
+      case 'recent':    return (b.lastDate||'').localeCompare(a.lastDate||'');
+      case 'played':    return b.played - a.played;
+      case 'wr':        return b.wr - a.wr;
+      default:          return a.d.name.localeCompare(b.d.name);
+    }
+  });
+
+  // Counter
+  const isFiltered = decks.length !== totalDecks;
+  html += `<div class="deck-counter">${isFiltered ? `Mostrando <strong>${decks.length}</strong> de <strong>${totalDecks}</strong> mazos` : `<strong>${totalDecks}</strong> mazo${totalDecks !== 1 ? 's' : ''}`}</div>`;
+
+  if(decks.length) {
     html += '<div class="cards-grid">';
-    DB.decks.forEach(d => {
+    decks.forEach(({ d, played, wr, lastDate }) => {
       const pname = playerName(d.playerId);
-      const played = DB.matches.filter(m=>m.slots&&m.slots.some(s=>s.deckId===d.id)).length;
-      const wins = DB.matches.filter(m=>m.slots&&m.slots.some(s=>s.deckId===d.id&&s.won)).length;
-      const wr = played ? Math.round(wins/played*100) : 0;
-      html += `<div class="deck-card">
-        <div class="deck-name">${d.name}</div>
-        <div class="deck-commander" style="margin-bottom:2px;">${d.commander||'—'}</div>
-        <div style="font-size:11px;color:var(--color-text-secondary);margin-bottom:6px;">${pname}</div>
-        <div class="pip-row">${(d.colors||[]).map(c=>`<div class="pip pip-${c}">${c}</div>`).join('')}</div>
-        <div class="stat-mini">${played} partidas ${played?`<span class="win-badge">${wr}% WR</span>`:''}</div>
-        <div style="margin-top:8px;display:flex;gap:6px;"><button class="btn btn-sm" onclick="startEditDeck('${d.id}')">editar</button><button class="btn btn-sm btn-danger" onclick="deleteDeck('${d.id}')">eliminar</button></div>
+      const imgStyle = d.scryfallImg
+        ? `background-image:url('${d.scryfallImg}');background-size:cover;background-position:center top;`
+        : 'background:var(--bg-raised);';
+      const lastUsed = lastDate ? `<span class="deck-last-date">Última: ${formatDate(lastDate)}</span>` : '';
+      html += `<div class="deck-card" style="${imgStyle}">
+        <div class="deck-card-overlay">
+          <div class="deck-pip-row">${(d.colors||[]).map(c=>`<div class="pip pip-${c}">${c}</div>`).join('')}</div>
+          <div class="deck-card-body">
+            <div class="deck-name">${d.name}</div>
+            <div class="deck-commander">${d.commander||'—'}</div>
+            <div class="deck-owner">${pname}</div>
+            <div class="deck-card-footer">
+              <div style="display:flex;flex-direction:column;gap:1px;">
+                <span class="deck-stat">${played} partida${played !== 1 ? 's' : ''}</span>
+                ${lastUsed}
+              </div>
+              ${played?`<span class="win-badge">${wr}% WR</span>`:''}
+            </div>
+            <div class="deck-card-btns">
+              <button class="btn btn-sm" onclick="startEditDeck('${d.id}')">editar</button>
+              <button class="btn btn-sm btn-danger" onclick="deleteDeck('${d.id}')">eliminar</button>
+            </div>
+          </div>
+        </div>
       </div>`;
     });
     html += '</div>';
   } else {
-    html += '<div class="empty-state">No hay mazos todavía.</div>';
+    html += '<div class="empty-state">No hay mazos que coincidan con los filtros.</div>';
   }
   const ed = editingDeckId ? DB.decks.find(d => d.id === editingDeckId) : null;
   html += `<div class="section-title" style="display:flex;align-items:center;justify-content:space-between;">${ed ? 'Editar mazo' : 'Agregar mazo'}${ed ? `<button class="btn btn-sm" onclick="cancelEditDeck()">Cancelar</button>` : ''}</div><div class="card-box">`;
@@ -158,6 +264,9 @@ function renderDecks() {
   </div>`;
   html += '</div>';
   el.innerHTML = html;
+
+  // Trigger Scryfall image fetches for any deck without art yet
+  DB.decks.forEach(d => { if (d.commander && !d.scryfallImg) fetchCommanderImage(d); });
 }
 
 function rerenderDeckForm() {}
@@ -314,6 +423,12 @@ function saveEditDeck() {
   if (!colors.length) { alert('Seleccioná al menos un color (buscá el comandante para autodetectarlos).'); return; }
   const deck = DB.decks.find(d => d.id === editingDeckId);
   if (!deck) return;
+  // If commander changed, clear cached image so it refetches
+  if (deck.commander !== commander) {
+    deck.scryfallImg = null;
+    const cacheKey = (deck.commander || '').toLowerCase();
+    if (_imgCache[cacheKey] !== undefined) delete _imgCache[cacheKey];
+  }
   deck.playerId = pid;
   deck.name = name;
   deck.commander = commander;
@@ -321,6 +436,41 @@ function saveEditDeck() {
   editingDeckId = null;
   save(); renderAll();
 }
+
+// ── Deck sort/filter helpers ───────────────────────────────────────────────
+function setDeckSort(key) { deckSort = key; renderDecks(); }
+function setDeckSearch(val) { deckSearch = val; renderDecks(); }
+function setDeckFilter(key, val) { deckFilters[key] = val; renderDecks(); }
+function clearDeckFilters() {
+  deckSearch = '';
+  deckFilters = { owner:'', minPlayed:'', maxPlayed:'', minWR:'', maxWR:'', fromDate:'', toDate:'' };
+  renderDecks();
+}
+
+// ── Scryfall image fetcher ─────────────────────────────────────────────────
+const _imgCache = {};
+async function fetchCommanderImage(deck) {
+  if (!deck.commander || deck.scryfallImg) return;
+  const key = deck.commander.toLowerCase();
+  if (_imgCache[key] === null) return; // known miss
+  if (_imgCache[key]) { deck.scryfallImg = _imgCache[key]; renderDecks(); return; }
+  try {
+    const url = `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(deck.commander)}&format=json`;
+    const res = await fetch(url);
+    if (!res.ok) { _imgCache[key] = null; return; }
+    const card = await res.json();
+    // Prefer art_crop, fall back to large face or small
+    let img = null;
+    if (card.image_uris) {
+      img = card.image_uris.art_crop || card.image_uris.large;
+    } else if (card.card_faces && card.card_faces[0].image_uris) {
+      img = card.card_faces[0].image_uris.art_crop || card.card_faces[0].image_uris.large;
+    }
+    _imgCache[key] = img || null;
+    if (img) { deck.scryfallImg = img; renderDecks(); }
+  } catch(e) { _imgCache[key] = null; }
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 function addFFASlot() {
   if(window.ffaSlots.length >= 8) return;
@@ -1308,6 +1458,10 @@ window.updateFFASlotPlayer = updateFFASlotPlayer;
 window.updateFFASlotDeck = updateFFASlotDeck;
 
 window.addDeck = addDeck;
+window.setDeckSort = setDeckSort;
+window.setDeckSearch = setDeckSearch;
+window.setDeckFilter = setDeckFilter;
+window.clearDeckFilters = clearDeckFilters;
 window.startEditDeck = startEditDeck;
 window.cancelEditDeck = cancelEditDeck;
 window.saveEditDeck = saveEditDeck;
