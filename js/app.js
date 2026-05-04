@@ -1403,7 +1403,7 @@ function showTab(t) {
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   const el = document.getElementById('tab-'+t);
   if (el) el.classList.add('active');
-  const tabs = ['decks','match','history','stats','tournament'];
+  const tabs = ['match','tournament','playgroups','history','stats','decks','profile'];
   const idx = tabs.indexOf(t);
   const btns = document.querySelectorAll('.nav-btn');
   if (idx >= 0 && btns[idx]) btns[idx].classList.add('active');

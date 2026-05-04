@@ -30,19 +30,22 @@
   </div>
 
   <div class="nav">
-    <button class="nav-btn active" onclick="showTab('decks')">Mazos</button>
-    <button class="nav-btn" onclick="showTab('match')">Partida</button>
-    <button class="nav-btn" onclick="showTab('history')">Historial</button>
-    <button class="nav-btn" onclick="showTab('stats')">Estadísticas</button>
+    <button class="nav-btn" onclick="showTab('match')">Partidas</button>
     <button class="nav-btn" onclick="showTab('tournament')">Torneos</button>
     <button class="nav-btn" onclick="showTab('playgroups')">Playgroups</button>
+    <button class="nav-btn" onclick="showTab('history')">Mi Historial</button>
+    <button class="nav-btn" onclick="showTab('stats')">Mis Estadísticas</button>
+    <button class="nav-btn" onclick="showTab('decks')">Mis Mazos</button>
+    <button class="nav-btn active" onclick="showTab('profile')">Mi Perfil</button>
   </div>
 
-  <div id="tab-decks"      class="section active tab-content-scroll"></div>
   <div id="tab-match"      class="section tab-content-scroll"></div>
+  <div id="tab-tournament" class="section tab-content-scroll"></div>
+  <div id="tab-playgroup" class="section tab-content-scroll"></div>
   <div id="tab-history"    class="section tab-content-scroll"></div>
   <div id="tab-stats"      class="section tab-content-scroll"></div>
-  <div id="tab-tournament" class="section tab-content-scroll"></div>
+  <div id="tab-decks"      class="section tab-content-scroll"></div>
+  <div id="tab-profile"    class="section active tab-content-scroll"></div>
 
   <div id="modal-overlay">
     <div id="modal-box"></div>
