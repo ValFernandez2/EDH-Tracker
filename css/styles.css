@@ -762,6 +762,39 @@ tr:hover td { background: var(--bg-raised); }
   box-shadow: 0 0 60px rgba(196,154,26,0.15), 0 24px 80px rgba(0,0,0,0.9);
 }
 
+
+/* ── Playgroup list card ── */
+.pg-list-card {
+  background: var(--bg-card);
+  border: 1px solid var(--gold-border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.12s;
+}
+.pg-list-card:hover {
+  border-color: var(--gold);
+  box-shadow: 0 0 18px rgba(196,154,26,0.18);
+  transform: translateY(-1px);
+}
+
+/* ── Playgroup tag in history ── */
+.tag-playgroup {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: rgba(100,160,255,0.12);
+  color: #6a9fc8;
+  border: 1px solid rgba(100,160,255,0.25);
+  white-space: nowrap;
+}
+
+/* ── My row highlight in tables ── */
+tr.my-row td { background: rgba(196,154,26,0.04); }
+
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }

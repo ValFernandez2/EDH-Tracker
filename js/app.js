@@ -40,6 +40,9 @@ let deckSort = 'name';       // 'name','commander','owner','recent','played','wr
 let deckSearch = '';
 let deckFilters = { owner: '', minPlayed: '', maxPlayed: '', minWR: '', maxWR: '', fromDate: '', toDate: '' };
 
+// Cache for loaded playgroup data (pgId -> {matches, decks, players, tournaments, sessions})
+window._pgCache = {};
+
 let historyFilters = {
   playerId: "",
   fromDate: "",
@@ -140,10 +143,7 @@ function renderDecks() {
       <div class="deck-toolbar-group">
         <span class="toolbar-label">Filtrar</span>
         <input type="text" placeholder="Buscar mazo..." value="${deckSearch}" oninput="setDeckSearch(this.value)" style="width:140px;">
-        <select onchange="setDeckFilter('owner',this.value)" style="width:110px;">
-          <option value="">Todos</option>
-          ${DB.players.map(p=>`<option value="${p.id}"${deckFilters.owner===p.id?' selected':''}>${p.name}</option>`).join('')}
-        </select>
+
         <div class="toolbar-range-group">
           <span class="toolbar-label" style="white-space:nowrap;">Partidas</span>
           <input type="number" placeholder="mín" min="0" value="${deckFilters.minPlayed}" onchange="setDeckFilter('minPlayed',this.value)" style="width:54px;">
@@ -168,15 +168,15 @@ function renderDecks() {
   </div>`;
 
   // ── Build filtered + sorted list ───────────────────────────
-  const totalDecks = DB.decks.length;
-  let decks = DB.decks.map(d => ({ d, ...getDeckStats(d) }));
+  const myUid = window.AUTH?.user?.uid;
+  const totalDecks = DB.decks.filter(d => d.playerId === myUid).length;
+  let decks = DB.decks.filter(d => d.playerId === myUid).map(d => ({ d, ...getDeckStats(d) }));
 
   // Filter
   if (deckSearch) {
     const q = deckSearch.toLowerCase();
     decks = decks.filter(x => x.d.name.toLowerCase().includes(q));
   }
-  if (deckFilters.owner) decks = decks.filter(x => x.d.playerId === deckFilters.owner);
   if (deckFilters.minPlayed !== '') decks = decks.filter(x => x.played >= parseInt(deckFilters.minPlayed));
   if (deckFilters.maxPlayed !== '') decks = decks.filter(x => x.played <= parseInt(deckFilters.maxPlayed));
   if (deckFilters.minWR !== '') decks = decks.filter(x => x.wr >= parseInt(deckFilters.minWR));
@@ -934,74 +934,59 @@ function saveMatch() {
 
 function renderHistory() {
   const el = document.getElementById('tab-history');
-  if(!DB.matches.length) { el.innerHTML = '<div class="empty-state">No hay partidas registradas todavía.</div>'; return; }
-  let html = '';
-  html += `
-  <div class="card-box" style="margin-bottom:10px;">
-    <div style="font-size:13px;font-weight:500;margin-bottom:8px;color:var(--color-text-secondary);">
-    Filtrar
-     </div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+  const myUid = window.AUTH?.user?.uid;
 
-    <div style="display:flex;flex-direction:column;">
-  <label>Jugador</label>
-  <select onchange="setHistoryFilter('playerId', this.value)">
-    <option value="">Todos</option>
-    ${DB.players.map(p=>`
-      <option value="${p.id}" ${p.id === historyFilters.playerId ? 'selected' : ''}>
-        ${p.name}
-      </option>
-    `).join('')}
-  </select>
-</div>
-    <div>
-      <label>Desde</label>
-      <input type="date" value="${historyFilters.fromDate}" onchange="setHistoryFilter('fromDate', this.value)">
+  // Only show MY matches
+  const myMatches = DB.matches.filter(m => m.slots?.some(s => s.playerId === myUid));
+
+  if (!myMatches.length) {
+    el.innerHTML = '<div class="empty-state">No hay partidas tuyas registradas todavía.</div>';
+    return;
+  }
+
+  let html = `<div class="card-box deck-toolbar" style="margin-bottom:10px;">
+    <div class="deck-toolbar-row">
+      <span class="toolbar-row-label">Filtrar</span>
+      <div class="deck-toolbar-group">
+        <div class="toolbar-range-group">
+          <span class="toolbar-range-label">Desde</span>
+          <input type="date" value="${historyFilters.fromDate}" onchange="setHistoryFilter('fromDate', this.value)" class="toolbar-date">
+        </div>
+        <div class="toolbar-range-group">
+          <span class="toolbar-range-label">Hasta</span>
+          <input type="date" value="${historyFilters.toDate}" onchange="setHistoryFilter('toDate', this.value)" class="toolbar-date">
+        </div>
+        <select onchange="setHistoryFilter('sessionId', this.value)" class="toolbar-select">
+          <option value="">Todas las sesiones</option>
+          ${DB.sessions.map(s=>`<option value="${s.id}" ${s.id === historyFilters.sessionId ? 'selected' : ''}>${s.name}</option>`).join('')}
+        </select>
+        <select onchange="setHistoryFilter('tournamentId', this.value)" class="toolbar-select">
+          <option value="">Todos los torneos</option>
+          ${DB.tournaments.map(t=>`<option value="${t.id}" ${t.id === historyFilters.tournamentId ? 'selected' : ''}>${t.name}</option>`).join('')}
+          <option value="none" ${historyFilters.tournamentId === 'none' ? 'selected' : ''}>Sin torneo</option>
+        </select>
+        ${(historyFilters.fromDate||historyFilters.toDate||historyFilters.sessionId||historyFilters.tournamentId)
+          ? `<button class="btn btn-sm" onclick="clearHistoryFilters()">Limpiar</button>` : ''}
+      </div>
     </div>
+  </div>`;
 
-    <div>
-      <label>Hasta</label>
-      <input type="date" value="${historyFilters.toDate}" onchange="setHistoryFilter('toDate', this.value)">
-    </div>
+  const filtered = applyHistoryFilters(myMatches);
+  const sorted = [...filtered].sort((a,b) => (b.date||'').localeCompare(a.date||''));
 
-    <div>
-      <label>Sesión</label>
-      <select onchange="setHistoryFilter('sessionId', this.value)">
-      <option value="">Todas</option>
-      ${DB.sessions.map(s=>`<option value="${s.id}" ${s.id === historyFilters.sessionId ? 'selected' : ''}>${s.name}
-      </option>`).join('')}
-      </select>
-    </div>
+  // Build a pg lookup map for the badge
+  const pgMap = {};
+  (window.AUTH?.playgroups || []).forEach(pg => { pgMap[pg.id] = pg.name; });
 
-    <div>
-      <label>Torneo</label>
-      <select onchange="setHistoryFilter('tournamentId', this.value)">
-        <option value="">Todos</option>
-        ${DB.tournaments.map(t=>`
-        <option value="${t.id}" ${t.id === historyFilters.tournamentId ? 'selected' : ''}>
-        ${t.name}
-        </option>
-        `).join('')}
-        <option value="none" ${historyFilters.tournamentId === 'none' ? 'selected' : ''}>
-        Sin torneo
-        </option>
-      </select>
-    </div>
-
-    <button class="btn btn-sm" onclick="clearHistoryFilters()">Limpiar</button>
-
-    </div>
-  </div>
-  `;
-  const filtered = applyHistoryFilters(DB.matches);
-  const sorted = [...filtered].sort((a,b)=>(b.date || '').localeCompare(a.date || ''));
   sorted.forEach(m => {
-    const t = m.tournamentId ? DB.tournaments.find(t=>t.id===m.tournamentId) : null;
-    const session = m.sessionId ? DB.sessions.find(s => s.id === m.sessionId): null;
+    const t       = m.tournamentId ? DB.tournaments.find(t => t.id === m.tournamentId) : null;
+    const session = m.sessionId    ? DB.sessions.find(s => s.id === m.sessionId)       : null;
+    const pgName  = m.playgroupId  ? pgMap[m.playgroupId] : null;
     html += `<div class="history-item">
       <div class="history-date">${formatDate(m.date)}</div>
       <div class="history-type">${m.type==='ffa'?'Free':'Team'}</div>
-      ${t?`<span class="tag-tournament">${t.name}</span>`:''}
+      ${pgName ? `<span class="tag-playgroup">${pgName}</span>` : ''}
+      ${t ? `<span class="tag-tournament">${t.name}</span>` : ''}
       <div style="flex:1;min-width:0;">
         ${m.slots.map(s=>`<span style="font-size:12px;margin-right:8px;${s.won?'color:var(--color-text-success);font-weight:500;':'color:var(--color-text-secondary);'}">${playerName(s.playerId)}: ${deckName(s.deckId)}${s.won?' ✓':''}</span>`).join('')}
       </div>
@@ -1139,40 +1124,96 @@ function deleteMatch(id) {
 
 function renderStats() {
   const el = document.getElementById('tab-stats');
-  const freeMatches = DB.matches.filter(m=>!m.tournamentId);
-  const total = DB.matches.length;
-  const ffa = DB.matches.filter(m=>m.type==='ffa').length;
-  const v2 = DB.matches.filter(m=>m.type==='2v2').length;
+  const myUid    = window.AUTH?.user?.uid;
+  const myDecks  = DB.decks.filter(d => d.playerId === myUid);
+  const myMatches = DB.matches.filter(m => m.slots?.some(s => s.playerId === myUid));
+  const myWins   = myMatches.filter(m => m.slots?.some(s => s.playerId === myUid && s.won));
+  const wr       = myMatches.length ? Math.round(myWins.length / myMatches.length * 100) : 0;
+  const ffa      = myMatches.filter(m => m.type === 'ffa').length;
+  const v2       = myMatches.filter(m => m.type === '2v2').length;
 
   let html = `<div class="stats-grid">
-    <div class="stat-card"><div class="stat-label">Partidas totales</div><div class="stat-value">${total}</div><div class="stat-sub">FFA: ${ffa} · 2v2: ${v2}</div></div>
-    <div class="stat-card"><div class="stat-label">En torneos</div><div class="stat-value">${total-freeMatches.length}</div><div class="stat-sub">${freeMatches.length} partidas libres</div></div>
-    <div class="stat-card"><div class="stat-label">Jugadores</div><div class="stat-value">${DB.players.length}</div><div class="stat-sub">${DB.decks.length} mazos</div></div>
+    <div class="stat-card"><div class="stat-label">Mis partidas</div><div class="stat-value">${myMatches.length}</div><div class="stat-sub">FFA: ${ffa} · 2v2: ${v2}</div></div>
+    <div class="stat-card"><div class="stat-label">Mi Win Rate</div><div class="stat-value">${wr}%</div><div class="stat-sub">${myWins.length} victorias</div></div>
+    <div class="stat-card"><div class="stat-label">Mis Mazos</div><div class="stat-value">${myDecks.length}</div><div class="stat-sub">${myDecks.filter(d => d.sharedWith?.length).length} compartidos</div></div>
   </div>`;
 
-  if(DB.decks.length) {
+  // My decks WR
+  if (myDecks.length) {
     html += '<div class="section-title">Win rate por mazo</div>';
-    const deckStats = DB.decks.map(d=>{
-      const ms = DB.matches.filter(m=>m.slots&&m.slots.some(s=>s.deckId===d.id));
-      const wins = ms.filter(m=>m.slots.some(s=>s.deckId===d.id&&s.won)).length;
-      const wr = ms.length ? Math.round(wins/ms.length*100) : 0;
-      return { name: d.name, player: playerName(d.playerId), played: ms.length, wins, wr };
-    }).filter(d=>d.played>0).sort((a,b)=>b.wr-a.wr);
-    if(deckStats.length) {
-      html += deckStats.map(d=>`<div class="bar-row">
-        <div class="bar-label" title="${d.name} (${d.player})">${d.name}</div>
+    const deckStats = myDecks.map(d => {
+      const ms   = myMatches.filter(m => m.slots?.some(s => s.deckId === d.id));
+      const wins = ms.filter(m => m.slots.some(s => s.deckId === d.id && s.won)).length;
+      const dwr  = ms.length ? Math.round(wins / ms.length * 100) : 0;
+      return { name: d.name, played: ms.length, wins, wr: dwr };
+    }).sort((a,b) => b.wr - a.wr || b.played - a.played);
+    if (deckStats.some(d => d.played > 0)) {
+      html += deckStats.filter(d => d.played > 0).map(d => `<div class="bar-row">
+        <div class="bar-label">${d.name}</div>
         <div class="bar-track"><div class="bar-fill" style="width:${d.wr}%"></div></div>
         <div class="bar-pct">${d.wr}%</div>
-        <div style="font-size:11px;color:var(--color-text-secondary);min-width:55px;text-align:right;">${d.wins}/${d.played}</div>
+        <div style="font-size:11px;color:var(--text-sub);min-width:40px;text-align:right;">${d.wins}/${d.played}</div>
       </div>`).join('');
-    } else { html += '<div class="empty-state">Jugá partidas para ver estadísticas.</div>'; }
+    } else {
+      html += '<div class="empty-state">Jugá partidas para ver estadísticas.</div>';
+    }
   }
 
-  if(DB.players.length) {
-    html += '<div class="section-title" style="margin-top:1.25rem;">Ranking de jugadores</div>';
-    html += renderLeaderboardTable(DB.matches, DB.players, 'wr', false);
+  // Position in each playgroup
+  const pgs = window.AUTH?.playgroups || [];
+  if (pgs.length) {
+    html += '<div class="section-title" style="margin-top:1.25rem;">Mi posición por playgroup</div>';
+    pgs.forEach(pg => {
+      const pgData = window._pgCache?.[pg.id];
+      if (!pgData) {
+        html += `<div class="card-box" style="margin-bottom:8px;padding:10px 14px;">
+          <div style="font-size:13px;font-weight:600;margin-bottom:6px;">${pg.name}</div>
+          <div style="font-size:12px;color:var(--text-sub);">Cargando datos... <button class="btn btn-sm" onclick="loadPgStats('${pg.id}')">Cargar</button></div>
+        </div>`;
+        return;
+      }
+      const members = Object.entries(pg.members || {}).map(([uid, m]) => ({ id: uid, name: m.displayName }));
+      const pgMatches = pgData.matches || [];
+      const rows = members.map(p => {
+        const ms   = pgMatches.filter(m => m.slots?.some(s => s.playerId === p.id));
+        const wins = ms.filter(m => m.slots.some(s => s.playerId === p.id && s.won)).length;
+        const pwr  = ms.length ? Math.round(wins / ms.length * 100) : 0;
+        return { ...p, played: ms.length, wins, wr: pwr };
+      }).filter(r => r.played > 0).sort((a,b) => b.wr - a.wr || b.wins - a.wins);
+      const myPos = rows.findIndex(r => r.id === myUid);
+      html += `<div class="card-box" style="margin-bottom:8px;padding:10px 14px;">
+        <div style="font-size:13px;font-weight:600;margin-bottom:8px;">${pg.name}
+          ${myPos >= 0 ? `<span style="font-size:11px;font-weight:400;color:var(--gold);margin-left:8px;">Posición #${myPos+1} de ${rows.length}</span>` : ''}
+        </div>
+        ${rows.length ? `<table style="width:100%;">
+          <thead><tr>
+            <th style="width:24px;">#</th>
+            <th>Jugador</th>
+            <th>Partidas</th>
+            <th>Victorias</th>
+            <th>WR</th>
+          </tr></thead>
+          <tbody>${rows.map((r,i) => `<tr class="${r.id === myUid ? 'my-row' : ''}${i===0?' rank-1':''}">
+            <td style="color:var(--text-sub);font-size:12px;">${['🥇','🥈','🥉'][i]||i+1}</td>
+            <td style="font-weight:${r.id===myUid?'700':'400'};color:${r.id===myUid?'var(--gold)':'inherit'};">${r.name}</td>
+            <td style="color:var(--text-sub);">${r.played}</td>
+            <td>${r.wins}</td>
+            <td><span style="font-weight:600;color:${r.wr>=50?'var(--success)':'var(--text-sub)'};">${r.wr}%</span></td>
+          </tr>`).join('')}</tbody>
+        </table>` : `<div style="font-size:12px;color:var(--text-sub);">Sin partidas registradas.</div>`}
+      </div>`;
+    });
   }
+
   el.innerHTML = html;
+}
+
+async function loadPgStats(pgId) {
+  const { loadPlaygroupData } = await import('./firebase.js');
+  const data = await loadPlaygroupData(pgId);
+  if (!window._pgCache) window._pgCache = {};
+  window._pgCache[pgId] = data;
+  renderStats();
 }
 
 function renderLeaderboardTable(matches, players, sortKey, showMedals) {
@@ -1419,58 +1460,44 @@ function renderAll() {
 
 
 // ── Playgroups tab ───────────────────────────────────────────────────────────
+let activePgDetailId = null; // which pg is being viewed in detail
+
 function renderPlaygroups() {
   const el = document.getElementById('tab-playgroups');
   if (!el) return;
-  const pgs = window.AUTH?.playgroups || [];
+  if (activePgDetailId) { renderPgDetail(el, activePgDetailId); return; }
 
+  const pgs = window.AUTH?.playgroups || [];
   let html = '';
+
   if (!pgs.length) {
     html += `<div class="empty-state">No pertenecés a ningún playgroup todavía.</div>`;
   } else {
+    html += `<div class="cards-grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));">`;
     pgs.forEach(pg => {
-      const members = Object.entries(pg.members || {});
-      html += `<div class="card-box" style="margin-bottom:12px;">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px;">
-          <div>
-            <div class="section-title" style="margin-bottom:3px;">${pg.name}</div>
-            <div style="font-size:11px;color:var(--text-sub);">
-              Código de invitación: <span style="color:var(--gold);font-weight:700;letter-spacing:0.1em;">${pg.code}</span>
-            </div>
-          </div>
-          <div style="display:flex;gap:6px;align-items:center;">
-            <button class="btn btn-sm btn-danger" onclick="window.__leavePg('${pg.id}','${pg.name.replace(/'/g,"\\'")}')">Salir</button>
-          </div>
+      const memberCount = Object.keys(pg.members || {}).length;
+      const pgMatches   = window._pgCache?.[pg.id]?.matches || [];
+      html += `<div class="pg-list-card" onclick="window.__openPgDetail('${pg.id}')">
+        <div style="font-size:16px;font-weight:700;font-family:'Cinzel',serif;color:var(--gold);margin-bottom:4px;">${pg.name}</div>
+        <div style="font-size:11px;color:var(--text-sub);margin-bottom:10px;">${memberCount} miembro${memberCount!==1?'s':''} · ${pgMatches.length} partidas</div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px;">
+          ${Object.values(pg.members||{}).map(m=>`<span style="font-size:11px;background:var(--bg-raised);border:1px solid var(--border);border-radius:12px;padding:2px 8px;">${m.displayName}</span>`).join('')}
         </div>
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-sub);margin-bottom:8px;">${members.length} miembro${members.length !== 1 ? 's' : ''}</div>
-        <div style="display:flex;flex-wrap:wrap;gap:6px;">
-          ${members.map(([memberId, m]) => `
-            <div style="display:flex;align-items:center;gap:6px;background:var(--bg-raised);border:1px solid var(--border);border-radius:20px;padding:4px 12px;">
-              <span style="font-size:13px;">${m.displayName}</span>
-              ${memberId === pg.createdBy ? `<span style="font-size:9px;color:var(--gold);font-weight:700;letter-spacing:0.06em;">ADMIN</span>` : ''}
-              ${m.isGuest ? `<span style="font-size:9px;color:var(--text-sub);">sin cuenta</span>` : ''}
-            </div>
-          `).join('')}
-        </div>
+        <div style="font-size:10px;color:var(--text-sub);">Código: <span style="color:var(--gold);font-weight:700;letter-spacing:0.1em;">${pg.code}</span></div>
       </div>`;
     });
+    html += `</div>`;
   }
 
-  html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px;">
+  html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px;">
     <div class="card-box">
       <div class="section-title" style="margin-bottom:10px;">Crear playgroup</div>
-      <div class="form-group">
-        <label>Nombre</label>
-        <input type="text" id="pg-create-name" placeholder="Ej: Morfi y Ñemita">
-      </div>
+      <div class="form-group"><label>Nombre</label><input type="text" id="pg-create-name" placeholder="Ej: Morfi y Ñemita"></div>
       <button class="btn btn-gold" onclick="window.__createPg()">Crear</button>
     </div>
     <div class="card-box">
       <div class="section-title" style="margin-bottom:10px;">Unirse con código</div>
-      <div class="form-group">
-        <label>Código</label>
-        <input type="text" id="pg-join-code" placeholder="Ej: A1B2C3" maxlength="6" style="text-transform:uppercase;letter-spacing:0.1em;">
-      </div>
+      <div class="form-group"><label>Código</label><input type="text" id="pg-join-code" placeholder="Ej: A1B2C3" maxlength="6" style="text-transform:uppercase;letter-spacing:0.1em;"></div>
       <button class="btn btn-gold" onclick="window.__joinPg()">Unirse</button>
     </div>
   </div>
@@ -1479,31 +1506,146 @@ function renderPlaygroups() {
   el.innerHTML = html;
 }
 
-// Override pg modal actions to work in-tab
+function renderPgDetail(el, pgId) {
+  const pg = (window.AUTH?.playgroups || []).find(p => p.id === pgId);
+  if (!pg) { activePgDetailId = null; renderPlaygroups(); return; }
+  const pgData  = window._pgCache?.[pgId] || { matches:[], tournaments:[], decks:[] };
+  const matches = pgData.matches || [];
+  const decks   = pgData.decks   || [];
+  const members = Object.entries(pg.members || {}).map(([uid,m]) => ({ id: uid, ...m }));
+  const myUid   = window.AUTH?.user?.uid;
+
+  // Build player/deck name helpers scoped to this pg
+  const pgPlayerName = id => {
+    const m = members.find(m => m.id === id);
+    if (m) return m.displayName;
+    // guest fallback
+    const guestKey = id.replace('guest_','');
+    return members.find(m => m.legacyId === guestKey)?.displayName || id;
+  };
+  const pgDeckName = id => {
+    const d = decks.find(d => d.id === id);
+    return d ? d.name : (DB.decks.find(d => d.id === id)?.name || '—');
+  };
+
+  // Stats per member
+  const memberStats = members.map(m => {
+    const ms   = matches.filter(match => match.slots?.some(s => s.playerId === m.id));
+    const wins = ms.filter(match => match.slots.some(s => s.playerId === m.id && s.won)).length;
+    const wr   = ms.length ? Math.round(wins/ms.length*100) : 0;
+    return { ...m, played: ms.length, wins, wr };
+  }).filter(r => r.played > 0).sort((a,b) => b.wr - a.wr || b.wins - a.wins);
+
+  // All decks seen in matches
+  const deckIds = [...new Set(matches.flatMap(m => m.slots?.map(s => s.deckId)||[]))];
+  const pgDeckStats = deckIds.map(did => {
+    const d      = decks.find(d => d.id === did) || DB.decks.find(d => d.id === did);
+    if (!d) return null;
+    const ms     = matches.filter(m => m.slots?.some(s => s.deckId === did));
+    const wins   = ms.filter(m => m.slots.some(s => s.deckId === did && s.won)).length;
+    const dwr    = ms.length ? Math.round(wins/ms.length*100) : 0;
+    return { name: d.name, owner: pgPlayerName(d.playerId), played: ms.length, wins, wr: dwr };
+  }).filter(Boolean).sort((a,b) => b.wr - a.wr);
+
+  const recentMatches = [...matches].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,10);
+
+  let html = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:1.25rem;">
+      <button class="btn btn-sm" onclick="window.__closePgDetail()">← Volver</button>
+      <div>
+        <div style="font-family:'Cinzel',serif;font-size:18px;font-weight:600;color:var(--gold);">${pg.name}</div>
+        <div style="font-size:11px;color:var(--text-sub);">${members.length} miembros · Código: <span style="color:var(--gold);font-weight:700;">${pg.code}</span></div>
+      </div>
+      <button class="btn btn-sm btn-danger" style="margin-left:auto;" onclick="window.__leavePg('${pg.id}','${pg.name.replace(/'/g,"\\'")}')">Salir</button>
+    </div>
+
+    <div class="stats-grid" style="margin-bottom:1.25rem;">
+      <div class="stat-card"><div class="stat-label">Partidas</div><div class="stat-value">${matches.length}</div></div>
+      <div class="stat-card"><div class="stat-label">Miembros</div><div class="stat-value">${members.length}</div></div>
+      <div class="stat-card"><div class="stat-label">Mazos usados</div><div class="stat-value">${deckIds.length}</div></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:1.25rem;">
+      <div class="card-box">
+        <div class="section-title">Ranking</div>
+        ${memberStats.length ? `<table style="width:100%;">
+          <thead><tr><th>#</th><th>Jugador</th><th>Partidas</th><th>WR</th></tr></thead>
+          <tbody>${memberStats.map((r,i) => `<tr class="${r.id===myUid?'my-row':''}${i===0?' rank-1':''}">
+            <td style="color:var(--text-sub);font-size:12px;">${['🥇','🥈','🥉'][i]||i+1}</td>
+            <td style="font-weight:${r.id===myUid?'700':'400'};color:${r.id===myUid?'var(--gold)':'inherit'};">${r.displayName}${r.isGuest?'<span style="font-size:9px;color:var(--text-sub);margin-left:4px;">guest</span>':''}</td>
+            <td style="color:var(--text-sub);">${r.played}</td>
+            <td><span style="font-weight:600;color:${r.wr>=50?'var(--success)':'var(--text-sub)'};">${r.wr}%</span></td>
+          </tr>`).join('')}</tbody>
+        </table>` : '<div class="empty-state">Sin partidas todavía.</div>'}
+      </div>
+      <div class="card-box">
+        <div class="section-title">Mazos más usados</div>
+        ${pgDeckStats.slice(0,8).map(d => `<div class="bar-row">
+          <div class="bar-label" title="${d.name} (${d.owner})">${d.name}</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${d.wr}%"></div></div>
+          <div class="bar-pct">${d.wr}%</div>
+          <div style="font-size:10px;color:var(--text-sub);min-width:32px;text-align:right;">${d.wins}/${d.played}</div>
+        </div>`).join('') || '<div class="empty-state">Sin datos.</div>'}
+      </div>
+    </div>
+
+    <div class="card-box">
+      <div class="section-title">Historial reciente</div>
+      ${recentMatches.length ? recentMatches.map(m => {
+        const t = m.tournamentId ? (pgData.tournaments||[]).find(t=>t.id===m.tournamentId) : null;
+        return `<div class="history-item">
+          <div class="history-date">${formatDate(m.date)}</div>
+          <div class="history-type">${m.type==='ffa'?'Free':'Team'}</div>
+          ${t?`<span class="tag-tournament">${t.name}</span>`:''}
+          <div style="flex:1;min-width:0;">
+            ${(m.slots||[]).map(s=>`<span style="font-size:12px;margin-right:8px;${s.won?'color:var(--success);font-weight:500;':'color:var(--text-sub);'}">${pgPlayerName(s.playerId)}: ${pgDeckName(s.deckId)}${s.won?' ✓':''}</span>`).join('')}
+          </div>
+        </div>`;
+      }).join('') : '<div class="empty-state">Sin partidas registradas.</div>'}
+    </div>
+  `;
+
+  el.innerHTML = html;
+}
+
+window.__openPgDetail = async (pgId) => {
+  // Reload fresh data for this pg
+  const { loadPlaygroupData } = await import('./firebase.js');
+  if (!window._pgCache) window._pgCache = {};
+  window._pgCache[pgId] = await loadPlaygroupData(pgId);
+  activePgDetailId = pgId;
+  renderPlaygroups();
+};
+
+window.__closePgDetail = () => {
+  activePgDetailId = null;
+  renderPlaygroups();
+};
+
 window.__createPg = async () => {
-  const name = document.getElementById('pg-create-name')?.value.trim();
+  const name  = document.getElementById('pg-create-name')?.value.trim();
   const errEl = document.getElementById('pg-error');
   if (errEl) errEl.style.display = 'none';
-  if (!name) { if (errEl) { errEl.textContent = 'Ingresá un nombre.'; errEl.style.display = 'block'; } return; }
+  if (!name) { if(errEl){errEl.textContent='Ingresá un nombre.';errEl.style.display='block';} return; }
   try {
     const { createPlaygroup } = await import('./firebase.js');
-    const pg = await createPlaygroup(name, window.AUTH.user.uid, window.AUTH.user.displayName || window.AUTH.user.email);
+    const pg = await createPlaygroup(name, window.AUTH.user.uid, window.AUTH.user.displayName||window.AUTH.user.email);
     window.AUTH.playgroups.push(pg);
     renderPlaygroups();
-  } catch(e) { if (errEl) { errEl.textContent = e.message; errEl.style.display = 'block'; } }
+  } catch(e) { if(errEl){errEl.textContent=e.message;errEl.style.display='block';} }
 };
 
 window.__joinPg = async () => {
-  const code = document.getElementById('pg-join-code')?.value.trim();
+  const code  = document.getElementById('pg-join-code')?.value.trim();
   const errEl = document.getElementById('pg-error');
   if (errEl) errEl.style.display = 'none';
-  if (!code) { if (errEl) { errEl.textContent = 'Ingresá el código.'; errEl.style.display = 'block'; } return; }
+  if (!code) { if(errEl){errEl.textContent='Ingresá el código.';errEl.style.display='block';} return; }
   try {
     const { joinPlaygroup } = await import('./firebase.js');
-    const pg = await joinPlaygroup(code, window.AUTH.user.uid, window.AUTH.user.displayName || window.AUTH.user.email);
+    const pg = await joinPlaygroup(code, window.AUTH.user.uid, window.AUTH.user.displayName||window.AUTH.user.email);
     window.AUTH.playgroups.push(pg);
     renderPlaygroups();
-  } catch(e) { if (errEl) { errEl.textContent = e.message; errEl.style.display = 'block'; } }
+  } catch(e) { if(errEl){errEl.textContent=e.message;errEl.style.display='block';} }
 };
 
 window.__leavePg = async (pgId, pgName) => {
@@ -1516,9 +1658,11 @@ window.__leavePg = async (pgId, pgName) => {
       window.AUTH.pgId = window.AUTH.playgroups[0]?.id || null;
       localStorage.setItem('lastPgId', window.AUTH.pgId || '');
     }
+    activePgDetailId = null;
     await loadAndRender();
   } catch(e) { alert('Error: ' + e.message); }
 };
+
 
 // ── Profile tab ───────────────────────────────────────────────────────────────
 function renderProfile() {
@@ -1534,7 +1678,7 @@ function renderProfile() {
     const played = DB.matches.filter(m => m.slots?.some(s => s.deckId === d.id)).length;
     const wins   = DB.matches.filter(m => m.slots?.some(s => s.deckId === d.id && s.won)).length;
     return { d, played, wr: played ? Math.round(wins/played*100) : 0 };
-  }).filter(x => x.played >= 2).sort((a,b) => b.wr - a.wr);
+  }).filter(x => x.played >= 1).sort((a,b) => b.wr - a.wr || b.played - a.played);
   const bestDeck = deckStats[0];
 
   el.innerHTML = `
@@ -1589,8 +1733,20 @@ async function loadAndRender() {
   } catch(e) {
     console.error('Load error:', e);
   }
+  // Preload pg data for stats
+  await preloadPgStats();
   renderAll();
-  updatePlaygroupBadge();
+}
+
+async function preloadPgStats() {
+  const { loadPlaygroupData } = await import('./firebase.js');
+  if (!window._pgCache) window._pgCache = {};
+  const pgs = window.AUTH?.playgroups || [];
+  await Promise.all(pgs.map(async pg => {
+    try {
+      window._pgCache[pg.id] = await loadPlaygroupData(pg.id);
+    } catch(e) { /* silent */ }
+  }));
 }
 
 function updatePlaygroupBadge() {
