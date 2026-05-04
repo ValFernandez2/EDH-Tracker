@@ -323,10 +323,16 @@ export async function saveAppData(DB) {
 
   // Save playgroup data
   if (pgId) {
+    // Include guest decks (no account) and current user's decks shared with this pg
+    const decksForPg = (DB.decks || []).filter(d =>
+      d.playerId?.startsWith('guest_') ||
+      (d.playerId === uid && (d.sharedWith || []).includes(pgId))
+    );
     await savePlaygroupData(pgId, {
       matches:     DB.matches     || [],
       tournaments: DB.tournaments || [],
       sessions:    DB.sessions    || [],
+      decks:       decksForPg,
     });
   }
 }

@@ -1609,10 +1609,29 @@ function renderPgDetail(el, pgId) {
 }
 
 window.__openPgDetail = async (pgId) => {
-  // Reload fresh data for this pg
-  const { loadPlaygroupData } = await import('./firebase.js');
+  const { loadPlaygroupData, loadUserDecks } = await import('./firebase.js');
   if (!window._pgCache) window._pgCache = {};
-  window._pgCache[pgId] = await loadPlaygroupData(pgId);
+  const pgData = await loadPlaygroupData(pgId);
+
+  // Merge in decks from real (non-guest) members shared with this pg
+  const pg = (window.AUTH?.playgroups || []).find(p => p.id === pgId);
+  const deckMap = new Map((pgData.decks || []).map(d => [d.id, d]));
+
+  if (pg) {
+    const realMembers = Object.entries(pg.members || {})
+      .filter(([uid, m]) => !m.isGuest);
+    for (const [memberUid] of realMembers) {
+      try {
+        const memberDecks = await loadUserDecks(memberUid);
+        memberDecks
+          .filter(d => (d.sharedWith || []).includes(pgId))
+          .forEach(d => deckMap.set(d.id, d));
+      } catch(e) { /* skip */ }
+    }
+  }
+
+  pgData.decks = Array.from(deckMap.values());
+  window._pgCache[pgId] = pgData;
   activePgDetailId = pgId;
   renderPlaygroups();
 };
@@ -1739,12 +1758,24 @@ async function loadAndRender() {
 }
 
 async function preloadPgStats() {
-  const { loadPlaygroupData } = await import('./firebase.js');
+  const { loadPlaygroupData, loadUserDecks } = await import('./firebase.js');
   if (!window._pgCache) window._pgCache = {};
   const pgs = window.AUTH?.playgroups || [];
   await Promise.all(pgs.map(async pg => {
     try {
-      window._pgCache[pg.id] = await loadPlaygroupData(pg.id);
+      const pgData = await loadPlaygroupData(pg.id);
+      // Merge real member decks shared with this pg
+      const deckMap = new Map((pgData.decks || []).map(d => [d.id, d]));
+      const realMembers = Object.entries(pg.members || {}).filter(([,m]) => !m.isGuest);
+      for (const [memberUid] of realMembers) {
+        try {
+          const memberDecks = await loadUserDecks(memberUid);
+          memberDecks.filter(d => (d.sharedWith||[]).includes(pg.id))
+                     .forEach(d => deckMap.set(d.id, d));
+        } catch(e) { /* skip */ }
+      }
+      pgData.decks = Array.from(deckMap.values());
+      window._pgCache[pg.id] = pgData;
     } catch(e) { /* silent */ }
   }));
 }
