@@ -116,6 +116,24 @@ export async function getUserPlaygroups(uid) {
   return results.filter(Boolean);
 }
 
+export async function leavePlaygroup(pgId, uid) {
+  // Remove member from playgroup
+  const pgRef = doc(db, "playgroups", pgId);
+  const pgSnap = await getDoc(pgRef);
+  if (!pgSnap.exists()) throw new Error("Playgroup no encontrado.");
+  const pg = pgSnap.data();
+  if (!pg.members?.[uid]) throw new Error("No sos miembro de este playgroup.");
+  if (pg.createdBy === uid && Object.keys(pg.members).length > 1)
+    throw new Error("Sos el admin — transferí el rol antes de salir.");
+  // Remove from members map
+  const updatedMembers = { ...pg.members };
+  delete updatedMembers[uid];
+  await updateDoc(pgRef, { members: updatedMembers });
+  // Remove from user's list
+  const ids = await getUserPlaygroupIds(uid);
+  await updateDoc(doc(db, "users", uid), { playgroupIds: ids.filter(id => id !== pgId) });
+}
+
 // ── Per-playgroup match/tournament data ───────────────────────────────────────
 // playgroups/{pgId}/data/main  →  { matches, tournaments, sessions }
 

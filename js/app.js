@@ -235,21 +235,19 @@ function renderDecks() {
     html += '<div class="empty-state">No hay mazos que coincidan con los filtros.</div>';
   }
   const ed = editingDeckId ? DB.decks.find(d => d.id === editingDeckId) : null;
-  const myUid = window.AUTH?.user?.uid || '';
-  const myName = window.AUTH?.user?.displayName || 'Yo';
   html += `<div class="section-title" style="display:flex;align-items:center;justify-content:space-between;">${ed ? 'Editar mazo' : 'Agregar mazo'}${ed ? `<button class="btn btn-sm" onclick="cancelEditDeck()">Cancelar</button>` : ''}</div><div class="card-box">`;
   html += `<div class="form-row">
     <div class="form-group" style="margin-bottom:0;"><label>Nombre del mazo</label><input type="text" id="d-name" placeholder="Ej: Control Azul" value="${ed ? ed.name : ''}"></div>
-    <div class="form-group" style="margin-bottom:0;"><label>Compartir con playgroups</label>
-      <div id="deck-share-pgs" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:2px;">
+    <div class="form-group" style="margin-bottom:0;"><label>Compartir con</label>
+      <div id="deck-share-pgs" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;">
         ${(window.AUTH?.playgroups || []).map(pg => {
-          const shared = ed ? (ed.sharedWith || []).includes(pg.id) : false;
-          return `<label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;">
-            <input type="checkbox" value="${pg.id}" ${shared ? 'checked' : ''} style="accent-color:var(--gold);">
+          const checked = ed ? (ed.sharedWith || []).includes(pg.id) : false;
+          return `<label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;font-weight:500;">
+            <input type="checkbox" value="${pg.id}" ${checked ? 'checked' : ''} style="accent-color:var(--gold);">
             ${pg.name}
           </label>`;
         }).join('')}
-        ${!(window.AUTH?.playgroups || []).length ? '<span style="font-size:12px;color:var(--text-sub);">Sin playgroups</span>' : ''}
+        ${!(window.AUTH?.playgroups || []).length ? '<span style="font-size:12px;color:var(--text-sub);">Sin playgroups todavía</span>' : ''}
       </div>
     </div>
   </div>
@@ -412,6 +410,11 @@ function saveEditDeck() {
   const deck = DB.decks.find(d => d.id === editingDeckId);
   if (!deck) return;
   // If commander changed, clear cached image so it refetches
+  if (deck.commander !== commander) {
+    deck.scryfallImg = null;
+    const cacheKey = (deck.commander || '').toLowerCase();
+    if (_imgCache[cacheKey] !== undefined) delete _imgCache[cacheKey];
+  }
   if (deck.commander !== commander) {
     deck.scryfallImg = null;
     const cacheKey = (deck.commander || '').toLowerCase();
@@ -1417,37 +1420,34 @@ function renderAll() {
 
 // ── Playgroups tab ───────────────────────────────────────────────────────────
 function renderPlaygroups() {
-  const el = document.getElementById('tab-playgroup');
+  const el = document.getElementById('tab-playgroups');
   if (!el) return;
   const pgs = window.AUTH?.playgroups || [];
-  const myUid = window.AUTH?.user?.uid;
 
   let html = '';
-
   if (!pgs.length) {
     html += `<div class="empty-state">No pertenecés a ningún playgroup todavía.</div>`;
   } else {
     pgs.forEach(pg => {
       const members = Object.entries(pg.members || {});
-      const isActive = window.AUTH?.pgId === pg.id;
-      html += `<div class="card-box" style="border-color:${isActive ? 'var(--gold)' : 'var(--border)'};margin-bottom:12px;">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px;">
+      html += `<div class="card-box" style="margin-bottom:12px;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px;">
           <div>
-            <div class="section-title" style="margin-bottom:2px;">${pg.name}</div>
+            <div class="section-title" style="margin-bottom:3px;">${pg.name}</div>
             <div style="font-size:11px;color:var(--text-sub);">
               Código de invitación: <span style="color:var(--gold);font-weight:700;letter-spacing:0.1em;">${pg.code}</span>
             </div>
           </div>
-          ${isActive
-            ? `<span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--gold);border:1px solid var(--gold-border);padding:3px 8px;border-radius:20px;">Activo</span>`
-            : `<button class="btn btn-sm btn-gold" onclick="window.__selectPg('${pg.id}')">Ver datos</button>`}
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button class="btn btn-sm btn-danger" onclick="window.__leavePg('${pg.id}','${pg.name.replace(/'/g,"\\'")}')">Salir</button>
+          </div>
         </div>
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-sub);margin-bottom:8px;">${members.length} miembro${members.length !== 1 ? 's' : ''}</div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-sub);margin-bottom:8px;">${members.length} miembro${members.length !== 1 ? 's' : ''}</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;">
-          ${members.map(([uid, m]) => `
+          ${members.map(([memberId, m]) => `
             <div style="display:flex;align-items:center;gap:6px;background:var(--bg-raised);border:1px solid var(--border);border-radius:20px;padding:4px 12px;">
               <span style="font-size:13px;">${m.displayName}</span>
-              ${uid === pg.createdBy ? `<span style="font-size:9px;color:var(--gold);font-weight:700;">ADMIN</span>` : ''}
+              ${memberId === pg.createdBy ? `<span style="font-size:9px;color:var(--gold);font-weight:700;letter-spacing:0.06em;">ADMIN</span>` : ''}
               ${m.isGuest ? `<span style="font-size:9px;color:var(--text-sub);">sin cuenta</span>` : ''}
             </div>
           `).join('')}
@@ -1456,7 +1456,6 @@ function renderPlaygroups() {
     });
   }
 
-  // Create / Join
   html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px;">
     <div class="card-box">
       <div class="section-title" style="margin-bottom:10px;">Crear playgroup</div>
@@ -1480,53 +1479,57 @@ function renderPlaygroups() {
   el.innerHTML = html;
 }
 
-// Override pg actions to also re-render
-const _origCreatePg = window.__createPg;
-const _origJoinPg   = window.__joinPg;
-window.__createPgTab = async () => {
+// Override pg modal actions to work in-tab
+window.__createPg = async () => {
   const name = document.getElementById('pg-create-name')?.value.trim();
   const errEl = document.getElementById('pg-error');
   if (errEl) errEl.style.display = 'none';
-  if (!name) { if(errEl){errEl.textContent='Ingresá un nombre.';errEl.style.display='block';} return; }
+  if (!name) { if (errEl) { errEl.textContent = 'Ingresá un nombre.'; errEl.style.display = 'block'; } return; }
   try {
     const { createPlaygroup } = await import('./firebase.js');
     const pg = await createPlaygroup(name, window.AUTH.user.uid, window.AUTH.user.displayName || window.AUTH.user.email);
     window.AUTH.playgroups.push(pg);
-    window.__selectPg(pg.id);
     renderPlaygroups();
-  } catch(e) { if(errEl){errEl.textContent=e.message;errEl.style.display='block';} }
+  } catch(e) { if (errEl) { errEl.textContent = e.message; errEl.style.display = 'block'; } }
 };
-window.__joinPgTab = async () => {
+
+window.__joinPg = async () => {
   const code = document.getElementById('pg-join-code')?.value.trim();
   const errEl = document.getElementById('pg-error');
   if (errEl) errEl.style.display = 'none';
-  if (!code) { if(errEl){errEl.textContent='Ingresá el código.';errEl.style.display='block';} return; }
+  if (!code) { if (errEl) { errEl.textContent = 'Ingresá el código.'; errEl.style.display = 'block'; } return; }
   try {
     const { joinPlaygroup } = await import('./firebase.js');
     const pg = await joinPlaygroup(code, window.AUTH.user.uid, window.AUTH.user.displayName || window.AUTH.user.email);
     window.AUTH.playgroups.push(pg);
-    window.__selectPg(pg.id);
     renderPlaygroups();
-  } catch(e) { if(errEl){errEl.textContent=e.message;errEl.style.display='block';} }
+  } catch(e) { if (errEl) { errEl.textContent = e.message; errEl.style.display = 'block'; } }
 };
-// remap buttons
-window.__createPg = window.__createPgTab;
-window.__joinPg   = window.__joinPgTab;
+
+window.__leavePg = async (pgId, pgName) => {
+  if (!confirm(`¿Salir del playgroup "${pgName}"?`)) return;
+  try {
+    const { leavePlaygroup } = await import('./firebase.js');
+    await leavePlaygroup(pgId, window.AUTH.user.uid);
+    window.AUTH.playgroups = window.AUTH.playgroups.filter(p => p.id !== pgId);
+    if (window.AUTH.pgId === pgId) {
+      window.AUTH.pgId = window.AUTH.playgroups[0]?.id || null;
+      localStorage.setItem('lastPgId', window.AUTH.pgId || '');
+    }
+    await loadAndRender();
+  } catch(e) { alert('Error: ' + e.message); }
+};
 
 // ── Profile tab ───────────────────────────────────────────────────────────────
 function renderProfile() {
   const el = document.getElementById('tab-profile');
   if (!el) return;
   const myUid  = window.AUTH?.user?.uid;
-  const myName = window.AUTH?.user?.displayName || window.AUTH?.user?.email || '';
   const pgs    = window.AUTH?.playgroups || [];
-
   const myDecks   = DB.decks.filter(d => d.playerId === myUid);
   const myMatches = DB.matches.filter(m => m.slots?.some(s => s.playerId === myUid));
   const myWins    = myMatches.filter(m => m.slots?.some(s => s.playerId === myUid && s.won));
   const wr        = myMatches.length ? Math.round(myWins.length / myMatches.length * 100) : 0;
-
-  // Best deck by WR (min 2 played)
   const deckStats = myDecks.map(d => {
     const played = DB.matches.filter(m => m.slots?.some(s => s.deckId === d.id)).length;
     const wins   = DB.matches.filter(m => m.slots?.some(s => s.deckId === d.id && s.won)).length;
@@ -1536,36 +1539,18 @@ function renderProfile() {
 
   el.innerHTML = `
     <div class="stats-grid" style="margin-bottom:1.25rem;">
-      <div class="stat-card">
-        <div class="stat-label">Partidas</div>
-        <div class="stat-value">${myMatches.length}</div>
-        <div class="stat-sub">totales</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Win Rate</div>
-        <div class="stat-value">${wr}%</div>
-        <div class="stat-sub">${myWins.length} victorias</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Mazos</div>
-        <div class="stat-value">${myDecks.length}</div>
-        <div class="stat-sub">${myDecks.filter(d=>(d.sharedWith||[]).length>0).length} compartidos</div>
-      </div>
+      <div class="stat-card"><div class="stat-label">Partidas</div><div class="stat-value">${myMatches.length}</div><div class="stat-sub">totales</div></div>
+      <div class="stat-card"><div class="stat-label">Win Rate</div><div class="stat-value">${wr}%</div><div class="stat-sub">${myWins.length} victorias</div></div>
+      <div class="stat-card"><div class="stat-label">Mazos</div><div class="stat-value">${myDecks.length}</div><div class="stat-sub">${myDecks.filter(d=>(d.sharedWith||[]).length>0).length} compartidos</div></div>
     </div>
-
     ${bestDeck ? `
     <div class="card-box" style="margin-bottom:1rem;">
       <div class="section-title">Mejor mazo</div>
-      <div style="display:flex;align-items:center;gap:12px;">
-        <div>
-          <div style="font-size:15px;font-weight:600;">${bestDeck.d.name}</div>
-          <div style="font-size:12px;color:var(--gold);">${bestDeck.d.commander || '—'}</div>
-          <div style="font-size:12px;color:var(--text-sub);margin-top:2px;">${bestDeck.played} partidas · ${bestDeck.wr}% WR</div>
-        </div>
-      </div>
+      <div style="font-size:15px;font-weight:600;">${bestDeck.d.name}</div>
+      <div style="font-size:12px;color:var(--gold);">${bestDeck.d.commander || '—'}</div>
+      <div style="font-size:12px;color:var(--text-sub);margin-top:2px;">${bestDeck.played} partidas · ${bestDeck.wr}% WR</div>
     </div>` : ''}
-
-    <div class="card-box" style="margin-bottom:1rem;">
+    <div class="card-box">
       <div class="section-title">Mis playgroups</div>
       ${pgs.length ? pgs.map(pg => `
         <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-subtle);">
@@ -1609,12 +1594,7 @@ async function loadAndRender() {
 }
 
 function updatePlaygroupBadge() {
-  const el = document.getElementById('header-pg');
-  if (!el) return;
-  const pg = window.AUTH?.playgroups?.find(p => p.id === window.AUTH?.pgId);
-  el.innerHTML = pg
-    ? `<span style="font-size:11px;color:var(--gold);font-weight:700;letter-spacing:0.06em;">${pg.name}</span>`
-    : `<span style="font-size:11px;color:var(--text-sub);">Sin playgroup</span>`;
+  // No longer shows active playgroup in header - handled in Playgroups tab
 }
 
 async function init() {
