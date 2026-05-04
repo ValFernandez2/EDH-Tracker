@@ -1,4 +1,4 @@
-import { loadAppData, saveAppData, deleteAppDeck, showPlaygroupScreen } from "./auth.js";
+import { loadAppData, saveAppData, deleteAppDeck } from "./auth.js";
 
 window.DB = { players: [], decks: [], matches: [], tournaments: [], sessions: [] };
 
@@ -235,10 +235,23 @@ function renderDecks() {
     html += '<div class="empty-state">No hay mazos que coincidan con los filtros.</div>';
   }
   const ed = editingDeckId ? DB.decks.find(d => d.id === editingDeckId) : null;
+  const myUid = window.AUTH?.user?.uid || '';
+  const myName = window.AUTH?.user?.displayName || 'Yo';
   html += `<div class="section-title" style="display:flex;align-items:center;justify-content:space-between;">${ed ? 'Editar mazo' : 'Agregar mazo'}${ed ? `<button class="btn btn-sm" onclick="cancelEditDeck()">Cancelar</button>` : ''}</div><div class="card-box">`;
   html += `<div class="form-row">
-    <div class="form-group" style="margin-bottom:0;"><label>Dueño</label><select id="d-player" onchange="rerenderDeckForm()">${playerOptions(ed ? ed.playerId : '')}</select></div>
     <div class="form-group" style="margin-bottom:0;"><label>Nombre del mazo</label><input type="text" id="d-name" placeholder="Ej: Control Azul" value="${ed ? ed.name : ''}"></div>
+    <div class="form-group" style="margin-bottom:0;"><label>Compartir con playgroups</label>
+      <div id="deck-share-pgs" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:2px;">
+        ${(window.AUTH?.playgroups || []).map(pg => {
+          const shared = ed ? (ed.sharedWith || []).includes(pg.id) : false;
+          return `<label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;">
+            <input type="checkbox" value="${pg.id}" ${shared ? 'checked' : ''} style="accent-color:var(--gold);">
+            ${pg.name}
+          </label>`;
+        }).join('')}
+        ${!(window.AUTH?.playgroups || []).length ? '<span style="font-size:12px;color:var(--text-sub);">Sin playgroups</span>' : ''}
+      </div>
+    </div>
   </div>
   <div class="form-group" style="margin-top:10px;position:relative;">
     <label>Comandante <span style="font-size:11px;color:var(--color-text-secondary);">(buscá por nombre)</span></label>
@@ -356,30 +369,15 @@ function selectCommander(idx) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function addDeck() {
-  // Default owner to current user if nothing selected
-  const pid = document.getElementById('d-player').value || window.AUTH?.user?.uid;
+  const pid = window.AUTH?.user?.uid;
+  if (!pid) { alert('No estás logueado.'); return; }
   const name = document.getElementById('d-name').value.trim();
   const commander = document.getElementById('d-commander').value.trim();
-
-  if(!pid) { alert('Seleccioná un jugador.'); return; }
-  if(!name) { alert('Ingresá un nombre para el mazo.'); return; }
-
-  const colors = [...document.querySelectorAll('#color-picker input:checked')].map(c=>c.value);
-
-  if(colors.length === 0) {
-    alert('Seleccioná al menos un color para el mazo.');
-    return;
-  }
-
-  DB.decks.push({
-  id: uid(),
-  playerId: pid,
-  userId: "local",
-  name,
-  commander,
-  colors,
-  createdAt: Date.now()
-  });
+  if (!name) { alert('Ingresá un nombre para el mazo.'); return; }
+  const colors = [...document.querySelectorAll('#color-picker input:checked')].map(c => c.value);
+  if (colors.length === 0) { alert('Seleccioná al menos un color para el mazo.'); return; }
+  const sharedWith = [...document.querySelectorAll('#deck-share-pgs input:checked')].map(cb => cb.value);
+  DB.decks.push({ id: uid(), playerId: pid, name, commander, colors, sharedWith, createdAt: Date.now() });
   save(); renderAll();
 }
 
@@ -406,10 +404,8 @@ function cancelEditDeck() {
 }
 
 function saveEditDeck() {
-  const pid = document.getElementById('d-player').value;
   const name = document.getElementById('d-name').value.trim();
   const commander = document.getElementById('d-commander').value.trim();
-  if (!pid) { alert('Seleccioná un jugador.'); return; }
   if (!name) { alert('Ingresá un nombre para el mazo.'); return; }
   const colors = [...document.querySelectorAll('#color-picker input:checked')].map(c => c.value);
   if (!colors.length) { alert('Seleccioná al menos un color (buscá el comandante para autodetectarlos).'); return; }
@@ -421,10 +417,10 @@ function saveEditDeck() {
     const cacheKey = (deck.commander || '').toLowerCase();
     if (_imgCache[cacheKey] !== undefined) delete _imgCache[cacheKey];
   }
-  deck.playerId = pid;
   deck.name = name;
   deck.commander = commander;
   deck.colors = colors;
+  deck.sharedWith = [...document.querySelectorAll('#deck-share-pgs input:checked')].map(cb => cb.value);
   editingDeckId = null;
   save(); renderAll();
 }
@@ -1397,7 +1393,6 @@ function deletePlayer(id) {
 }
 
 function showTab(t) {
-  if (t === 'playgroups') { showPlaygroupScreen(); return; }
   if (t === 'players') { showPlayersModal(); return; }
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
@@ -1415,9 +1410,174 @@ function renderAll() {
   renderHistory();
   renderStats();
   renderTournament();
-  renderPlayers();
+  renderPlaygroups();
+  renderProfile();
 }
 
+
+// ── Playgroups tab ───────────────────────────────────────────────────────────
+function renderPlaygroups() {
+  const el = document.getElementById('tab-playgroup');
+  if (!el) return;
+  const pgs = window.AUTH?.playgroups || [];
+  const myUid = window.AUTH?.user?.uid;
+
+  let html = '';
+
+  if (!pgs.length) {
+    html += `<div class="empty-state">No pertenecés a ningún playgroup todavía.</div>`;
+  } else {
+    pgs.forEach(pg => {
+      const members = Object.entries(pg.members || {});
+      const isActive = window.AUTH?.pgId === pg.id;
+      html += `<div class="card-box" style="border-color:${isActive ? 'var(--gold)' : 'var(--border)'};margin-bottom:12px;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px;">
+          <div>
+            <div class="section-title" style="margin-bottom:2px;">${pg.name}</div>
+            <div style="font-size:11px;color:var(--text-sub);">
+              Código de invitación: <span style="color:var(--gold);font-weight:700;letter-spacing:0.1em;">${pg.code}</span>
+            </div>
+          </div>
+          ${isActive
+            ? `<span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--gold);border:1px solid var(--gold-border);padding:3px 8px;border-radius:20px;">Activo</span>`
+            : `<button class="btn btn-sm btn-gold" onclick="window.__selectPg('${pg.id}')">Ver datos</button>`}
+        </div>
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-sub);margin-bottom:8px;">${members.length} miembro${members.length !== 1 ? 's' : ''}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+          ${members.map(([uid, m]) => `
+            <div style="display:flex;align-items:center;gap:6px;background:var(--bg-raised);border:1px solid var(--border);border-radius:20px;padding:4px 12px;">
+              <span style="font-size:13px;">${m.displayName}</span>
+              ${uid === pg.createdBy ? `<span style="font-size:9px;color:var(--gold);font-weight:700;">ADMIN</span>` : ''}
+              ${m.isGuest ? `<span style="font-size:9px;color:var(--text-sub);">sin cuenta</span>` : ''}
+            </div>
+          `).join('')}
+        </div>
+      </div>`;
+    });
+  }
+
+  // Create / Join
+  html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px;">
+    <div class="card-box">
+      <div class="section-title" style="margin-bottom:10px;">Crear playgroup</div>
+      <div class="form-group">
+        <label>Nombre</label>
+        <input type="text" id="pg-create-name" placeholder="Ej: Morfi y Ñemita">
+      </div>
+      <button class="btn btn-gold" onclick="window.__createPg()">Crear</button>
+    </div>
+    <div class="card-box">
+      <div class="section-title" style="margin-bottom:10px;">Unirse con código</div>
+      <div class="form-group">
+        <label>Código</label>
+        <input type="text" id="pg-join-code" placeholder="Ej: A1B2C3" maxlength="6" style="text-transform:uppercase;letter-spacing:0.1em;">
+      </div>
+      <button class="btn btn-gold" onclick="window.__joinPg()">Unirse</button>
+    </div>
+  </div>
+  <div id="pg-error" class="auth-error" style="display:none;margin-top:10px;"></div>`;
+
+  el.innerHTML = html;
+}
+
+// Override pg actions to also re-render
+const _origCreatePg = window.__createPg;
+const _origJoinPg   = window.__joinPg;
+window.__createPgTab = async () => {
+  const name = document.getElementById('pg-create-name')?.value.trim();
+  const errEl = document.getElementById('pg-error');
+  if (errEl) errEl.style.display = 'none';
+  if (!name) { if(errEl){errEl.textContent='Ingresá un nombre.';errEl.style.display='block';} return; }
+  try {
+    const { createPlaygroup } = await import('./firebase.js');
+    const pg = await createPlaygroup(name, window.AUTH.user.uid, window.AUTH.user.displayName || window.AUTH.user.email);
+    window.AUTH.playgroups.push(pg);
+    window.__selectPg(pg.id);
+    renderPlaygroups();
+  } catch(e) { if(errEl){errEl.textContent=e.message;errEl.style.display='block';} }
+};
+window.__joinPgTab = async () => {
+  const code = document.getElementById('pg-join-code')?.value.trim();
+  const errEl = document.getElementById('pg-error');
+  if (errEl) errEl.style.display = 'none';
+  if (!code) { if(errEl){errEl.textContent='Ingresá el código.';errEl.style.display='block';} return; }
+  try {
+    const { joinPlaygroup } = await import('./firebase.js');
+    const pg = await joinPlaygroup(code, window.AUTH.user.uid, window.AUTH.user.displayName || window.AUTH.user.email);
+    window.AUTH.playgroups.push(pg);
+    window.__selectPg(pg.id);
+    renderPlaygroups();
+  } catch(e) { if(errEl){errEl.textContent=e.message;errEl.style.display='block';} }
+};
+// remap buttons
+window.__createPg = window.__createPgTab;
+window.__joinPg   = window.__joinPgTab;
+
+// ── Profile tab ───────────────────────────────────────────────────────────────
+function renderProfile() {
+  const el = document.getElementById('tab-profile');
+  if (!el) return;
+  const myUid  = window.AUTH?.user?.uid;
+  const myName = window.AUTH?.user?.displayName || window.AUTH?.user?.email || '';
+  const pgs    = window.AUTH?.playgroups || [];
+
+  const myDecks   = DB.decks.filter(d => d.playerId === myUid);
+  const myMatches = DB.matches.filter(m => m.slots?.some(s => s.playerId === myUid));
+  const myWins    = myMatches.filter(m => m.slots?.some(s => s.playerId === myUid && s.won));
+  const wr        = myMatches.length ? Math.round(myWins.length / myMatches.length * 100) : 0;
+
+  // Best deck by WR (min 2 played)
+  const deckStats = myDecks.map(d => {
+    const played = DB.matches.filter(m => m.slots?.some(s => s.deckId === d.id)).length;
+    const wins   = DB.matches.filter(m => m.slots?.some(s => s.deckId === d.id && s.won)).length;
+    return { d, played, wr: played ? Math.round(wins/played*100) : 0 };
+  }).filter(x => x.played >= 2).sort((a,b) => b.wr - a.wr);
+  const bestDeck = deckStats[0];
+
+  el.innerHTML = `
+    <div class="stats-grid" style="margin-bottom:1.25rem;">
+      <div class="stat-card">
+        <div class="stat-label">Partidas</div>
+        <div class="stat-value">${myMatches.length}</div>
+        <div class="stat-sub">totales</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Win Rate</div>
+        <div class="stat-value">${wr}%</div>
+        <div class="stat-sub">${myWins.length} victorias</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Mazos</div>
+        <div class="stat-value">${myDecks.length}</div>
+        <div class="stat-sub">${myDecks.filter(d=>(d.sharedWith||[]).length>0).length} compartidos</div>
+      </div>
+    </div>
+
+    ${bestDeck ? `
+    <div class="card-box" style="margin-bottom:1rem;">
+      <div class="section-title">Mejor mazo</div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div>
+          <div style="font-size:15px;font-weight:600;">${bestDeck.d.name}</div>
+          <div style="font-size:12px;color:var(--gold);">${bestDeck.d.commander || '—'}</div>
+          <div style="font-size:12px;color:var(--text-sub);margin-top:2px;">${bestDeck.played} partidas · ${bestDeck.wr}% WR</div>
+        </div>
+      </div>
+    </div>` : ''}
+
+    <div class="card-box" style="margin-bottom:1rem;">
+      <div class="section-title">Mis playgroups</div>
+      ${pgs.length ? pgs.map(pg => `
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-subtle);">
+          <div>
+            <div style="font-size:14px;font-weight:500;">${pg.name}</div>
+            <div style="font-size:11px;color:var(--text-sub);">${Object.keys(pg.members||{}).length} miembros · Código: <span style="color:var(--gold);">${pg.code}</span></div>
+          </div>
+        </div>
+      `).join('') : '<div class="empty-state">Sin playgroups todavía.</div>'}
+    </div>
+  `;
+}
 
 // Called by auth.js after login
 window.__appBoot = async function() {
@@ -1469,6 +1629,8 @@ window.addPlayer = addPlayer;
 window.deletePlayer = deletePlayer;
 
 window.showTab = showTab;
+window.renderPlaygroups = renderPlaygroups;
+window.renderProfile = renderProfile;
 
 window.addFFASlot = addFFASlot;
 window.removeFFASlot = removeFFASlot;

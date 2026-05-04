@@ -256,21 +256,45 @@ window.__joinPg = async () => {
 // ── Data helpers (used by app.js) ─────────────────────────────────────────────
 
 export async function loadAppData() {
-  const uid  = AUTH.user?.uid;
-  const pgId = AUTH.pgId;
-
-  // Always load user's own decks
-  const decks = uid ? await loadUserDecks(uid) : [];
+  const myUid = AUTH.user?.uid;
+  const pgId  = AUTH.pgId;
 
   // Load playgroup data if one is selected
-  let pgData = { matches: [], tournaments: [], sessions: [] };
+  let pgData = { matches: [], tournaments: [], sessions: [], decks: [] };
   if (pgId) pgData = await loadPlaygroupData(pgId);
 
-  // Members of active playgroup become "players"
+  // Build players list from playgroup members
   const pg = AUTH.playgroups.find(p => p.id === pgId);
   const players = pg
-    ? Object.entries(pg.members || {}).map(([uid, m]) => ({ id: uid, name: m.displayName }))
-    : [{ id: uid, name: AUTH.user?.displayName || 'Yo' }];
+    ? Object.entries(pg.members || {}).map(([memberId, m]) => ({ id: memberId, name: m.displayName }))
+    : [{ id: myUid, name: AUTH.user?.displayName || 'Yo' }];
+
+  // Load decks: start with any decks stored in the playgroup data (migrated/shared)
+  let decks = pgData.decks ? [...pgData.decks] : [];
+
+  // Load current user's own decks from their subcollection
+  const myDecks = myUid ? await loadUserDecks(myUid) : [];
+
+  // Merge: user's own decks take priority (overwrite by id if already in pg decks)
+  // Also load decks from other real members that are shared with this pg
+  const deckMap = new Map(decks.map(d => [d.id, d]));
+  myDecks.forEach(d => deckMap.set(d.id, d));
+
+  // For each real (non-guest) member, load their decks shared with this pg
+  if (pg) {
+    const realMembers = Object.entries(pg.members || {})
+      .filter(([memberId, m]) => !m.isGuest && memberId !== myUid);
+    for (const [memberId] of realMembers) {
+      try {
+        const memberDecks = await loadUserDecks(memberId);
+        memberDecks
+          .filter(d => (d.sharedWith || []).includes(pgId))
+          .forEach(d => deckMap.set(d.id, d));
+      } catch(e) { /* member may have restricted access */ }
+    }
+  }
+
+  decks = Array.from(deckMap.values());
 
   return {
     players,
