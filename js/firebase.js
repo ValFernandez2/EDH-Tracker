@@ -83,25 +83,54 @@ export async function createPlaygroup(name, uid, displayName) {
       [uid]: { displayName, role: "admin", joinedAt: serverTimestamp() }
     }
   });
+
+  await setDoc(doc(db, "playgroupCodes", code), {
+  pgId: ref.id
+  });
+
   const ids = await getUserPlaygroupIds(uid);
   await updateDoc(doc(db, "users", uid), { playgroupIds: [...ids, ref.id] });
   return { id: ref.id, name, code };
 }
 
 export async function joinPlaygroup(code, uid, displayName) {
-  const q    = query(collection(db, "playgroups"), where("code", "==", code.toUpperCase()));
-  const snap = await getDocs(q);
-  if (snap.empty) throw new Error("Código inválido — no se encontró ningún playgroup.");
-  const pgDoc = snap.docs[0];
-  const pgId  = pgDoc.id;
-  const pg    = pgDoc.data();
-  if (pg.members && pg.members[uid]) throw new Error("Ya sos miembro de este playgroup.");
+  const codeRef = doc(db, "playgroupCodes", code.toUpperCase());
+  const snap = await getDoc(codeRef);
+
+  if (!snap.exists()) {
+    throw new Error("Código inválido — no se encontró ningún playgroup.");
+  }
+
+  const { pgId } = snap.data();
+
+  // Traer playgroup (ahora sí, permitido después del cambio de rules)
+  const pgSnap = await getDoc(doc(db, "playgroups", pgId));
+  if (!pgSnap.exists()) {
+    throw new Error("Playgroup no encontrado.");
+  }
+
+  const pg = pgSnap.data();
+
+  if (pg.members && pg.members[uid]) {
+    throw new Error("Ya sos miembro de este playgroup.");
+  }
+
+  // 🔥 join
   await updateDoc(doc(db, "playgroups", pgId), {
-    [`members.${uid}`]: { displayName, role: "member", joinedAt: serverTimestamp() }
+    [`members.${uid}`]: {
+      displayName,
+      role: "member",
+      joinedAt: serverTimestamp()
+    }
   });
+
+  // actualizar usuario
   const ids = await getUserPlaygroupIds(uid);
-  await updateDoc(doc(db, "users", uid), { playgroupIds: [...ids, pgId] });
-  return { id: pgId, name: pg.name, code: pg.code };
+  await updateDoc(doc(db, "users", uid), {
+    playgroupIds: [...ids, pgId]
+  });
+
+  return { id: pgId, name: pg.name, code: code.toUpperCase() };
 }
 
 export async function getPlaygroup(pgId) {
