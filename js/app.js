@@ -1,26 +1,17 @@
-import { loadFromCloud, saveToCloud } from "./firebase.js";
+import { loadAppData, saveAppData, deleteAppDeck, showPlaygroupScreen } from "./auth.js";
 
-window.DB = { players: [], decks: [], matches: [], tournaments: [] };
-if(!DB.players) DB.players = [];
-if(!DB.decks) DB.decks = [];
-if(!DB.matches) DB.matches = [];
-if(!DB.tournaments) DB.tournaments = [];
-if(!DB.users) DB.users = [{ id: "local", name: "Local User" }];
-if(!DB.sessions) DB.sessions = [];
+window.DB = { players: [], decks: [], matches: [], tournaments: [], sessions: [] };
 
 function save() {
-  console.log("Guardando DB:", DB);
-
-  localStorage.setItem('edhDB', JSON.stringify(DB)); 
-  saveToCloud(DB);
+  saveAppData(window.DB).catch(e => console.error('Save error:', e));
 }
 
 function normalizeDB() {
-  DB.players = DB.players || [];
-  DB.decks = DB.decks || [];
-  DB.matches = DB.matches || [];
+  DB.players     = DB.players     || [];
+  DB.decks       = DB.decks       || [];
+  DB.matches     = DB.matches     || [];
   DB.tournaments = DB.tournaments || [];
-  DB.sessions = DB.sessions || [];
+  DB.sessions    = DB.sessions    || [];
 }
 
 function formatDate(dateStr) {
@@ -365,7 +356,8 @@ function selectCommander(idx) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function addDeck() {
-  const pid = document.getElementById('d-player').value;
+  // Default owner to current user if nothing selected
+  const pid = document.getElementById('d-player').value || window.AUTH?.user?.uid;
   const name = document.getElementById('d-name').value.trim();
   const commander = document.getElementById('d-commander').value.trim();
 
@@ -394,7 +386,7 @@ function addDeck() {
 function deleteDeck(id) {
   if(!confirm('¿Eliminar este mazo?')) return;
   DB.decks = DB.decks.filter(d=>d.id!==id);
-  DB.matches = DB.matches.filter(m=>!m.slots||!m.slots.every(s=>s.deckId===id));
+  deleteAppDeck(id).catch(e => console.error('Delete deck error:', e));
   save(); renderAll();
 }
 
@@ -1405,11 +1397,16 @@ function deletePlayer(id) {
 }
 
 function showTab(t) {
+  if (t === 'playgroups') { showPlaygroupScreen(); return; }
+  if (t === 'players') { showPlayersModal(); return; }
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
-  document.getElementById('tab-'+t).classList.add('active');
-  const tabs = ['decks','match','history','stats','tournament','players'];
-  document.querySelectorAll('.nav-btn')[tabs.indexOf(t)].classList.add('active');
+  const el = document.getElementById('tab-'+t);
+  if (el) el.classList.add('active');
+  const tabs = ['decks','match','history','stats','tournament'];
+  const idx = tabs.indexOf(t);
+  const btns = document.querySelectorAll('.nav-btn');
+  if (idx >= 0 && btns[idx]) btns[idx].classList.add('active');
 }
 
 function renderAll() {
@@ -1422,29 +1419,50 @@ function renderAll() {
 }
 
 
-async function init() {
-  const local = localStorage.getItem('edhDB');
-  if (local) {
-    window.DB = JSON.parse(local);
+// Called by auth.js after login
+window.__appBoot = async function() {
+  await loadAndRender();
+};
+
+// Called when user selects/changes playgroup
+window.__appLoadPlaygroup = async function(pgId) {
+  await loadAndRender();
+  updatePlaygroupBadge();
+};
+
+async function loadAndRender() {
+  try {
+    const data = await loadAppData();
+    window.DB.players     = data.players;
+    window.DB.decks       = data.decks;
+    window.DB.matches     = data.matches;
+    window.DB.tournaments = data.tournaments;
+    window.DB.sessions    = data.sessions;
+    normalizeDB();
+    const activeSession = DB.sessions.find(s => !s.endedAt);
+    if (activeSession) currentSessionId = activeSession.id;
+  } catch(e) {
+    console.error('Load error:', e);
   }
-
-  const cloud = await loadFromCloud();
-
-  if (cloud) {
-    window.DB = cloud;
-  }
-
-  normalizeDB();
-
-  const activeSession = DB.sessions.find(s => !s.endedAt);
-  if (activeSession) {
-  currentSessionId = activeSession.id;
-  }
-
   renderAll();
+  updatePlaygroupBadge();
 }
 
-init(); 
+function updatePlaygroupBadge() {
+  const el = document.getElementById('header-pg');
+  if (!el) return;
+  const pg = window.AUTH?.playgroups?.find(p => p.id === window.AUTH?.pgId);
+  el.innerHTML = pg
+    ? `<span style="font-size:11px;color:var(--gold);font-weight:700;letter-spacing:0.06em;">${pg.name}</span>`
+    : `<span style="font-size:11px;color:var(--text-sub);">Sin playgroup</span>`;
+}
+
+async function init() {
+  // auth.js handles boot via onAuthChange → __appBoot
+  // Nothing to do here — renderAll will be called once auth resolves
+}
+
+init();
 
 // Exponer funciones al HTML
 window.addPlayer = addPlayer;

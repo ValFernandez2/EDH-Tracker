@@ -564,32 +564,7 @@ tr:hover td { background: var(--bg-raised); }
 .sort-btn.active { background: var(--gold-bg); color: var(--gold); border-color: var(--gold-border); }
 .sort-btn:hover:not(.active) { border-color: var(--gold-border); color: var(--text); }
 
-/* ── Modal ── */
-#modal-overlay {
-  position: fixed !important;
-  inset: 0 !important;
-  background: rgba(0,0,0,0.8) !important;
-  backdrop-filter: blur(6px) !important;
-  display: none !important;
-  align-items: center !important;
-  justify-content: center !important;
-  z-index: 1000 !important;
-  min-height: unset !important;
-  border-radius: 0 !important;
-  margin-bottom: 0 !important;
-}
-#modal-overlay.open { display: flex !important; }
-#modal-box {
-  background: var(--bg-card) !important;
-  border: 1px solid var(--gold-border) !important;
-  border-radius: var(--radius-lg) !important;
-  padding: 1.5rem !important;
-  width: 92%;
-  max-width: 420px;
-  max-height: 80vh;
-  overflow-y: auto;
-  box-shadow: 0 0 60px rgba(196,154,26,0.15), 0 24px 80px rgba(0,0,0,0.9) !important;
-}
+/* ── Modal — see auth CSS section above ── */
 
 /* ── Player pill ── */
 .player-pill {
@@ -665,6 +640,126 @@ tr:hover td { background: var(--bg-raised); }
   font-size: 9px;
   color: rgba(255,255,255,0.38);
   letter-spacing: 0.03em;
+}
+
+/* ── Auth screen ── */
+#auth-screen, #pg-screen {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 1rem;
+}
+
+.auth-card {
+  background: var(--bg-card);
+  border: 1px solid var(--gold-border);
+  border-radius: var(--radius-lg);
+  padding: 2rem;
+  width: 100%;
+  max-width: 380px;
+  box-shadow: 0 0 60px rgba(196,154,26,0.1), 0 24px 80px rgba(0,0,0,0.8);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.auth-logo { text-align: center; margin-bottom: 4px; }
+
+.auth-title {
+  font-family: 'Cinzel', serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--gold);
+  text-shadow: 0 0 24px rgba(196,154,26,0.3);
+  letter-spacing: 0.06em;
+}
+
+.auth-sub {
+  font-size: 12px;
+  color: var(--text-sub);
+  margin-top: 4px;
+  letter-spacing: 0.05em;
+}
+
+.auth-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.auth-tab {
+  flex: 1;
+  padding: 8px;
+  font-size: 12px;
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  color: var(--text-sub);
+  margin-bottom: -1px;
+  transition: color 0.15s, border-color 0.15s;
+}
+.auth-tab.active {
+  color: var(--gold);
+  border-bottom-color: var(--gold);
+}
+.auth-tab:hover:not(.active) { color: var(--text); }
+
+.auth-error {
+  font-size: 12px;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border: 1px solid rgba(192,57,43,0.3);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+
+/* ── Playgroup card ── */
+.pg-card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.pg-card:hover {
+  border-color: var(--gold-border);
+}
+.pg-card.active {
+  border-color: var(--gold);
+  box-shadow: 0 0 12px rgba(196,154,26,0.15);
+}
+
+/* ── Modal overlay (fixed position override) ── */
+#modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.8);
+  backdrop-filter: blur(6px);
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+}
+#modal-overlay.open { display: flex; }
+#modal-box {
+  background: var(--bg-card);
+  border: 1px solid var(--gold-border);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+  width: 92%;
+  max-width: 420px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 0 60px rgba(196,154,26,0.15), 0 24px 80px rgba(0,0,0,0.9);
 }
 
 /* ── Scrollbar ── */

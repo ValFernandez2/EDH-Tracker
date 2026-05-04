@@ -1,48 +1,56 @@
-  <!DOCTYPE html>
-  <html lang="es">
-  <head>
-    <meta charset="UTF-8">
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Commander Tracker</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
 
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<body>
+<h2 class="sr-only">EDH Commander Tracker</h2>
 
-    <title>Commander Tracker</title>
+<!-- ── Auth screen (injected by auth.js) ── -->
+<div id="auth-screen" style="display:none;"></div>
 
-    <!-- CSS -->
-    <link rel="stylesheet" href="css/styles.css">
-  </head>
+<!-- ── Playgroup screen (injected by auth.js) ── -->
+<div id="pg-screen" style="display:none;"></div>
 
-  <body> 
-  <h2 class="sr-only">EDH Tracker</h2>
+<!-- ── Main app shell ── -->
+<div id="app-shell" class="app" style="display:none;">
 
-  <div class="app">
-    <div class="header">
-      <div style="display:flex;gap:6px;align-items:center;">
-        
+  <div class="header">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div>
+        <div class="app-title">Commander Tracker</div>
+        <div id="header-pg" class="app-sub"></div>
       </div>
     </div>
-
-    <div class="nav">
-      <button class="nav-btn active" onclick="showTab('decks')">Mazos</button>
-      <button class="nav-btn" onclick="showTab('match')">Partida</button>
-      <button class="nav-btn" onclick="showTab('history')">Historial</button>
-      <button class="nav-btn" onclick="showTab('stats')">Estadísticas</button>
-      <button class="nav-btn" onclick="showTab('tournament')">Torneos</button>
-      <button class="nav-btn" onclick="showTab('players')">Jugadores</button>
-      
-    </div>
-
-    <div id="tab-decks" class="section active tab-content-scroll"></div>
-    <div id="tab-match" class="section tab-content-scroll"></div>
-    <div id="tab-history" class="section tab-content-scroll"></div>
-    <div id="tab-stats" class="section tab-content-scroll"></div>
-    <div id="tab-tournament" class="section tab-content-scroll"></div>
-    <div id="tab-players" class="section tab-content-scroll"></div>
+    <div id="header-user" style="display:flex;align-items:center;gap:8px;"></div>
   </div>
 
-  <div id="modal-overlay" style="display:none;position:relative;min-height:260px;background:rgba(0,0,0,0.45);border-radius:var(--border-radius-lg);margin-bottom:1rem;align-items:center;justify-content:center;">
-    <div id="modal-box" style="background:var(--color-background-primary);border-radius:var(--border-radius-lg);border:0.5px solid var(--color-border-tertiary);padding:1.25rem;width:92%;max-width:420px;max-height:480px;overflow-y:auto;"></div>
+  <div class="nav">
+    <button class="nav-btn active" onclick="showTab('decks')">Mazos</button>
+    <button class="nav-btn" onclick="showTab('match')">Partida</button>
+    <button class="nav-btn" onclick="showTab('history')">Historial</button>
+    <button class="nav-btn" onclick="showTab('stats')">Estadísticas</button>
+    <button class="nav-btn" onclick="showTab('tournament')">Torneos</button>
+    <button class="nav-btn" onclick="showTab('playgroups')">Playgroups</button>
   </div>
 
-    <script type="module" src="js/app.js"></script>
-  </body>
-  </html>
+  <div id="tab-decks"      class="section active tab-content-scroll"></div>
+  <div id="tab-match"      class="section tab-content-scroll"></div>
+  <div id="tab-history"    class="section tab-content-scroll"></div>
+  <div id="tab-stats"      class="section tab-content-scroll"></div>
+  <div id="tab-tournament" class="section tab-content-scroll"></div>
+
+  <div id="modal-overlay">
+    <div id="modal-box"></div>
+  </div>
+</div>
+
+<!-- auth.js boots first, then loads app.js -->
+<script type="module" src="js/auth.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
