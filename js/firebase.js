@@ -110,10 +110,31 @@ export async function getPlaygroup(pgId) {
 }
 
 export async function getUserPlaygroups(uid) {
-  const ids = await getUserPlaygroupIds(uid);
+  const db = getFirestore();
+
+  // 1. Traer el user
+  const userSnap = await getDoc(doc(db, "users", uid));
+  if (!userSnap.exists()) return [];
+
+  const data = userSnap.data();
+  const ids = data.playgroupIds || [];
+
   if (!ids.length) return [];
-  const results = await Promise.all(ids.map(id => getPlaygroup(id)));
-  return results.filter(Boolean);
+
+  // 2. Traer cada playgroup
+  const snaps = await Promise.all(
+    ids.map(id => getDoc(doc(db, "playgroups", id)))
+  );
+
+  // 3. Filtrar los que existen
+  const playgroups = snaps
+    .filter(s => s.exists())
+    .map(s => ({
+      id: s.id,
+      ...s.data()
+    }));
+
+  return playgroups;
 }
 
 export async function leavePlaygroup(pgId, uid) {
@@ -142,8 +163,24 @@ function pgDataRef(pgId) {
 }
 
 export async function loadPlaygroupData(pgId) {
-  const snap = await getDoc(pgDataRef(pgId));
-  return snap.exists() ? snap.data() : { matches: [], tournaments: [], sessions: [] };
+  if (!pgId) {
+    return { matches: [], tournaments: [], sessions: [] };
+  }
+
+  try {
+    const snap = await getDoc(pgDataRef(pgId));
+    return snap.exists()
+      ? snap.data()
+      : { matches: [], tournaments: [], sessions: [] };
+  } catch (e) {
+    console.warn("⚠️ Error loading playgroup:", pgId, e);
+
+    // 🔥 resetear estado roto
+    localStorage.removeItem('lastPgId');
+    if (window.AUTH) window.AUTH.pgId = null;
+
+    return { matches: [], tournaments: [], sessions: [] };
+  }
 }
 
 export async function savePlaygroupData(pgId, data) {

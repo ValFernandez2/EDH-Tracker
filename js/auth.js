@@ -31,10 +31,15 @@ async function bootAuthenticated(user) {
 
   // Restore last used playgroup from localStorage
   const savedPg = localStorage.getItem('lastPgId');
-  const validPg = AUTH.playgroups.find(pg => pg.id === savedPg);
-  if (validPg) {
-    window.AUTH.pgId = validPg.id;
+
+  let validPg = AUTH.playgroups.find(pg => pg.id === savedPg);
+
+  // 👉 si no existe, agarrar uno válido
+  if (!validPg && AUTH.playgroups.length) {
+    validPg = AUTH.playgroups[0];
   }
+
+window.AUTH.pgId = validPg ? validPg.id : null;
 
   hideAuthScreen();
   updateHeader();
