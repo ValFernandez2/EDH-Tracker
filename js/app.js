@@ -29,12 +29,15 @@ let tournamentSortKey = 'wr';
 let currentSessionId = null;
 let activeTournamentId = null;
 let editingMatchId = null;
+let matchPlaygroupId = null;
+
 if (!window.ffaSlots || typeof window.ffaSlots === "number") {
   window.ffaSlots = Array.from({ length: 4 }, () => ({
     playerId: "",
     deckId: ""
   }));
 }
+
 // Deck sort/filter state
 let deckSort = 'name';       // 'name','commander','owner','recent','played','wr'
 let deckSearch = '';
@@ -671,13 +674,19 @@ function onDeckInput(i, value) {
   if (!el) return;
 
   const q = value.toLowerCase();
+  if (q.length < 1) { el.style.display = 'none'; return; }
 
-  if (q.length < 1) {
-    el.style.display = 'none';
-    return;
+  // Si hay playgroup seleccionado, solo mostrar mazos de ese pg
+  let availableDecks = DB.decks;
+  if (matchPlaygroupId) {
+    availableDecks = DB.decks.filter(d =>
+      d.playerId?.startsWith('guest_') ||
+      (d.sharedWith || []).includes(matchPlaygroupId) ||
+      d.playerId === window.AUTH?.user?.uid
+    );
   }
 
-  const matches = DB.decks.filter(d => {
+  const matches = availableDecks.filter(d => {
     const owner = playerName(d.playerId);
     return (
       d.name.toLowerCase().includes(q) ||
@@ -694,14 +703,9 @@ function onDeckInput(i, value) {
 
   el.innerHTML = matches.map(d => {
     const owner = playerName(d.playerId);
-    return `
-      <div 
-        onclick="selectDeck(${i}, '${d.id}')"
-        style="padding:6px;cursor:pointer;"
-      >
-        ${d.name} - ${d.commander || '—'} (${owner})
-      </div>
-    `;
+    return `<div onclick="selectDeck(${i}, '${d.id}')" style="padding:6px;cursor:pointer;">
+      ${d.name} - ${d.commander || '—'} (${owner})
+    </div>`;
   }).join('');
 
   el.style.display = 'block';
@@ -984,13 +988,25 @@ function renderTeams() {
 }
 
 function renderMatchFooter() {
+  const pgs = window.AUTH?.playgroups || [];
+  const pgOptions = pgs.map(pg =>
+    `<option value="${pg.id}" ${matchPlaygroupId === pg.id ? 'selected' : ''}>${pg.name}</option>`
+  ).join('');
+
   return `
   <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
     <div class="form-group" style="margin-bottom:0;">
       <label>Fecha</label>
       <input type="date" id="m-date" style="max-width:160px;" value="${new Date().toISOString().slice(0,10)}">
     </div>
-
+    ${pgs.length ? `
+    <div class="form-group" style="margin-bottom:0;">
+      <label>Playgroup (opcional)</label>
+      <select id="m-playgroup" onchange="setMatchPlaygroup(this.value)">
+        <option value="">— personal —</option>
+        ${pgOptions}
+      </select>
+    </div>` : ''}
     <div class="form-group" style="margin-bottom:0;">
       <label>Torneo (opcional)</label>
       <select id="m-tournament">
@@ -999,7 +1015,6 @@ function renderMatchFooter() {
       </select>
     </div>
   </div>
-
   <div style="margin-top:12px;display:flex;gap:8px;align-items:center;">
     <button class="btn btn-gold" onclick="saveMatch()">${editingMatchId ? 'Guardar cambios' : 'Guardar partida'}</button>
     ${editingMatchId ? `<button class="btn" onclick="cancelEditMatch()">Cancelar</button>` : ''}
@@ -1008,6 +1023,11 @@ function renderMatchFooter() {
 }
 
 function setMatchType(t) { matchType = t; renderMatch(); }
+
+function setMatchPlaygroup(pgId) {
+  matchPlaygroupId = pgId || null;
+  renderMatch(); // re-renderiza para filtrar los mazos disponibles
+}
 
 function updateTeamConfig(key, val) {
   window.teamConfig[key] = parseInt(val);
@@ -1105,7 +1125,7 @@ function saveMatch() {
     type: matchType,
     date,
     createdAt: Date.now(),
-    playgroupId: null,     
+    playgroupId: matchPlaygroupId || null,    
     sessionId: currentSessionId,   
     tournamentId,
     slots
@@ -1118,7 +1138,16 @@ function saveMatch() {
     DB.matches.push(newMatch);
   }
 
+  if (matchPlaygroupId) {
+  // Guardar directamente en el playgroup seleccionado
+  const prevPgId = window.AUTH.pgId;
+  window.AUTH.pgId = matchPlaygroupId;
+  saveAppData(window.DB).catch(e => console.error('Save error:', e));
+  window.AUTH.pgId = prevPgId;
+  } else {
   save();
+  }
+  matchPlaygroupId = null; // reset
   renderAll();
   showTab('history');
 }
@@ -2020,6 +2049,7 @@ window.setHistoryFilter = setHistoryFilter;
 window.clearHistoryFilters = clearHistoryFilters;
 
 window.setMatchType = setMatchType;
+window.setMatchPlaygroup = setMatchPlaygroup;
 window.updateTeamConfig = updateTeamConfig;
 window.updateTeamSlotPlayer = updateTeamSlotPlayer;
 window.updateTeamSlotDeck = updateTeamSlotDeck;
