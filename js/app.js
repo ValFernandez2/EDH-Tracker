@@ -253,8 +253,16 @@ function renderDecks() {
   </div>
   <div class="form-group" style="margin-top:10px;position:relative;">
     <label>Comandante <span style="font-size:11px;color:var(--color-text-secondary);">(buscá por nombre)</span></label>
-    <input type="text" id="d-commander" placeholder="Ej: Atraxa, Praetors' Voice" autocomplete="off" oninput="onCommanderInput()" value="${ed ? ed.commander || '' : ''}">
+    <input type="text" id="d-commander" placeholder="Ej: Atraxa, Praetors' Voice" autocomplete="off" oninput="onCommanderInput()" value="${ed ? (ed.commanderFull || ed.commander || '').split(' + ')[0] : ''}">
     <div id="commander-suggestions" style="display:none;position:absolute;z-index:9999;background:var(--color-background-primary, #fff);border:1px solid var(--color-border-secondary);border-radius:var(--border-radius-md);width:100%;max-height:220px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,0.18);top:calc(100% + 2px);left:0;backdrop-filter:none;opacity:1;"></div>
+  </div>
+  <div id="partner-slot" style="display:${ed && ed.commanderFull && ed.commanderFull.includes(' + ') ? 'block' : 'none'};">
+    <div class="form-group" style="margin-top:6px;position:relative;">
+      <label id="partner-label">Partner <span style="font-size:11px;color:var(--color-text-secondary);">(segundo comandante)</span></label>
+      <input type="text" id="d-commander2" placeholder="Buscá el partner..." autocomplete="off" oninput="onCommander2Input()" value="${ed && ed.commanderFull && ed.commanderFull.includes(' + ') ? ed.commanderFull.split(' + ')[1] : ''}">
+      <div id="commander2-suggestions" style="display:none;position:absolute;z-index:9999;background:var(--color-background-primary, #fff);border:1px solid var(--color-border-secondary);border-radius:var(--border-radius-md);width:100%;max-height:220px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,0.18);top:calc(100% + 2px);left:0;"></div>
+      <div id="partner-error" style="font-size:11px;color:var(--danger);margin-top:4px;display:none;"></div>
+    </div>
   </div>
   <div class="form-group" style="margin-bottom:0;"><label>Colores <span id="colors-auto-hint" style="font-size:11px;color:var(--color-text-success);display:none;">✓ detectados automáticamente</span><span id="colors-manual-hint" style="font-size:11px;color:var(--color-text-secondary);">${ed ? '' : ' · seleccioná un comandante primero'}</span></label>
     <div class="colors-row" id="color-picker" style="pointer-events:none;opacity:${ed ? '1' : '0.45'};">
@@ -275,27 +283,76 @@ function rerenderDeckForm() {}
 
 // ── Scryfall Commander Autocomplete ──────────────────────────────────────────
 let _scryfallTimer = null;
-let _commanderCards = [];
+// ── Scryfall Commander Autocomplete ──────────────────────────────────────────
+let _commanderCards  = [];
+let _commander2Cards = [];
+let _selectedCard1   = null; // full Scryfall card object for commander 1
+let _selectedCard2   = null; // full Scryfall card object for commander 2
 
-// Close dropdown when clicking outside
-document.addEventListener('mousedown', e => {
+// Helper: detect partner type from a Scryfall card
+function getPartnerType(card) {
+  const oracle = (card.oracle_text || '') + (card.card_faces?.[0]?.oracle_text || '');
+  const kw     = (card.keywords || []).map(k => k.toLowerCase());
+  if (kw.includes('choose a background') || oracle.includes('Choose a Background'))
+    return 'background_chooser';
+  if (/background/i.test(card.type_line) && oracle.includes('Background'))
+    return 'background';
+  const pwMatch = oracle.match(/Partner with ([^()]+)/);
+  if (pwMatch) return { type: 'partner_with', name: pwMatch[1].trim() };
+  if (kw.includes('friends forever')) return 'friends_forever';
+  if (kw.includes('partner'))        return 'partner';
+  return null;
+}
 
-  // commander
-  const sug = document.getElementById('commander-suggestions');
-  const inp = document.getElementById('d-commander');
-  if (sug && inp && !sug.contains(e.target) && e.target !== inp) {
-    sug.style.display = 'none';
+// Helper: check if two cards are a legal partner pair
+function areLegalPartners(card1, card2) {
+  const p1 = getPartnerType(card1);
+  const p2 = getPartnerType(card2);
+  if (!p1 || !p2) return { ok: false, msg: `${card2.name} no tiene Partner.` };
+
+  // "Partner with" — must name each other
+  if (p1?.type === 'partner_with') {
+    if (p1.name.toLowerCase() !== card2.name.toLowerCase())
+      return { ok: false, msg: `${card1.name} solo puede ir con ${p1.name}.` };
+    return { ok: true };
+  }
+  if (p2?.type === 'partner_with') {
+    if (p2.name.toLowerCase() !== card1.name.toLowerCase())
+      return { ok: false, msg: `${card2.name} solo puede ir con ${p2.name}.` };
+    return { ok: true };
   }
 
-  // decks
-  document.querySelectorAll('[id^="deck-suggestions-"]').forEach(el => {
-    if (!el.contains(e.target)) {
-      el.style.display = 'none';
-    }
-  });
+  // Background — one must be "Choose a Background", other must be a Background
+  if (p1 === 'background_chooser' && p2 === 'background') return { ok: true };
+  if (p1 === 'background'         && p2 === 'background_chooser') return { ok: true };
+  if (p1 === 'background_chooser' || p2 === 'background_chooser' ||
+      p1 === 'background'         || p2 === 'background')
+    return { ok: false, msg: 'Combinación de Background inválida.' };
 
+  // Friends forever — both must have it
+  if (p1 === 'friends_forever' && p2 === 'friends_forever') return { ok: true };
+  if (p1 === 'friends_forever' || p2 === 'friends_forever')
+    return { ok: false, msg: 'Friends Forever solo puede ir con otro Friends Forever.' };
+
+  // Generic Partner — both must have it
+  if (p1 === 'partner' && p2 === 'partner') return { ok: true };
+  return { ok: false, msg: 'Combinación de Partner inválida.' };
+}
+
+// Close dropdowns when clicking outside
+document.addEventListener('mousedown', e => {
+  ['commander-suggestions','commander2-suggestions'].forEach(id => {
+    const sug = document.getElementById(id);
+    const inp = document.getElementById(id === 'commander-suggestions' ? 'd-commander' : 'd-commander2');
+    if (sug && inp && !sug.contains(e.target) && e.target !== inp)
+      sug.style.display = 'none';
+  });
+  document.querySelectorAll('[id^="deck-suggestions-"]').forEach(el => {
+    if (!el.contains(e.target)) el.style.display = 'none';
+  });
 });
 
+// ── Commander 1 ──
 function onCommanderInput() {
   const input = document.getElementById('d-commander');
   if (!input) return;
@@ -306,37 +363,69 @@ function onCommanderInput() {
     if (sug) sug.style.display = 'none';
     return;
   }
-  _scryfallTimer = setTimeout(() => fetchCommanderSuggestions(q), 300);
+  _scryfallTimer = setTimeout(() => fetchCommanderSuggestions(q, 1), 300);
 }
 
-async function fetchCommanderSuggestions(q) {
-  const sugEl = document.getElementById('commander-suggestions');
+// ── Commander 2 ──
+let _scryfallTimer2 = null;
+function onCommander2Input() {
+  const input = document.getElementById('d-commander2');
+  if (!input) return;
+  const q = input.value.trim();
+  clearTimeout(_scryfallTimer2);
+  if (q.length < 2) {
+    const sug = document.getElementById('commander2-suggestions');
+    if (sug) sug.style.display = 'none';
+    return;
+  }
+  // For "partner with", filter to just the specific partner
+  const p1 = _selectedCard1 ? getPartnerType(_selectedCard1) : null;
+  let extraFilter = '';
+  if (p1?.type === 'partner_with') extraFilter = `+"${p1.name}"`;
+  else if (p1 === 'background_chooser') extraFilter = '+t:background';
+  else if (p1 === 'background') extraFilter = '+is:commander';
+  else extraFilter = '';
+  _scryfallTimer2 = setTimeout(() => fetchCommanderSuggestions(q, 2, extraFilter), 300);
+}
+
+async function fetchCommanderSuggestions(q, slot = 1, extraFilter = '') {
+  const sugId = slot === 1 ? 'commander-suggestions' : 'commander2-suggestions';
+  const sugEl = document.getElementById(sugId);
   if (!sugEl) return;
   sugEl.style.display = 'block';
   sugEl.innerHTML = '<div style="padding:10px;font-size:12px;color:var(--color-text-secondary);">Buscando...</div>';
   try {
-    const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}+is:commander&order=name&unique=cards`;
-    const res = await fetch(url);
+    const base = slot === 1
+      ? `https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}+is:commander&order=name&unique=cards`
+      : `https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}${extraFilter}&order=name&unique=cards`;
+    const res  = await fetch(base);
     if (!res.ok) { sugEl.style.display = 'none'; return; }
     const data = await res.json();
-    if (!data.data || !data.data.length) {
+    if (!data.data?.length) {
       sugEl.innerHTML = '<div style="padding:10px;font-size:12px;color:var(--color-text-secondary);">Sin resultados</div>';
       return;
     }
-    _commanderCards = data.data.slice(0, 8);
-    sugEl.innerHTML = _commanderCards.map((card, idx) => {
+    const cards = data.data.slice(0, 8);
+    if (slot === 1) _commanderCards  = cards;
+    else            _commander2Cards = cards;
+
+    sugEl.innerHTML = cards.map((card, idx) => {
       const colors = card.color_identity || [];
-      const pips = colors.length
+      const pips   = colors.length
         ? colors.map(c => `<span class="pip pip-${c}" style="width:12px;height:12px;font-size:7px;">${c}</span>`).join('')
         : `<span class="pip pip-C" style="width:12px;height:12px;font-size:7px;">C</span>`;
+      const pt = getPartnerType(card);
+      const partnerBadge = pt
+        ? `<span style="font-size:9px;color:var(--gold);border:1px solid var(--gold-border);border-radius:10px;padding:1px 5px;margin-left:4px;">Partner</span>`
+        : '';
       return `<div
-        data-idx="${idx}"
-        onmousedown="selectCommander(${idx})"
+        onmousedown="${slot === 1 ? 'selectCommander' : 'selectCommander2'}(${idx})"
         style="padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;border-bottom:0.5px solid var(--color-border-tertiary);font-size:13px;"
         onmouseover="this.style.background='var(--color-background-secondary)'"
         onmouseout="this.style.background=''">
         <div style="display:flex;gap:2px;">${pips}</div>
         <span style="flex:1;">${card.name}</span>
+        ${partnerBadge}
       </div>`;
     }).join('');
   } catch(e) {
@@ -344,25 +433,99 @@ async function fetchCommanderSuggestions(q) {
   }
 }
 
-function selectCommander(idx) {
-  const card = _commanderCards[idx];
-  if (!card) return;
-  const input = document.getElementById('d-commander');
-  if (input) input.value = card.name;
-  const colors = card.color_identity || [];
+function applyColors(colors1, colors2 = []) {
+  const merged = [...new Set([...colors1, ...colors2])];
+  // If both incoloress, stay colorless; otherwise remove C if any color present
+  const final = merged.length === 0 || (merged.length === 1 && merged[0] === 'C')
+    ? ['C']
+    : merged.filter(c => c !== 'C').length > 0 ? merged.filter(c => c !== 'C') : merged;
   const picker = document.getElementById('color-picker');
   if (picker) { picker.style.pointerEvents = 'none'; picker.style.opacity = '1'; }
   document.querySelectorAll('#color-picker input').forEach(cb => {
     cb.disabled = false;
-    cb.checked = colors.length === 0 ? cb.value === 'C' : colors.includes(cb.value);
+    cb.checked  = final.includes(cb.value);
     cb.disabled = true;
   });
   const hint = document.getElementById('colors-auto-hint');
   if (hint) hint.style.display = 'inline';
   const manualHint = document.getElementById('colors-manual-hint');
   if (manualHint) manualHint.style.display = 'none';
+}
+
+function selectCommander(idx) {
+  const card = _commanderCards[idx];
+  if (!card) return;
+  _selectedCard1 = card;
+  _selectedCard2 = null; // reset partner if commander changes
+
+  const input = document.getElementById('d-commander');
+  if (input) input.value = card.name;
+
+  // Close dropdown
   const sugEl = document.getElementById('commander-suggestions');
   if (sugEl) sugEl.style.display = 'none';
+
+  // Show/hide partner slot
+  const pt = getPartnerType(card);
+  const partnerSlot = document.getElementById('partner-slot');
+  if (partnerSlot) {
+    if (pt) {
+      partnerSlot.style.display = 'block';
+      // Update partner label to be more specific
+      const lbl = document.getElementById('partner-label');
+      if (lbl) {
+        if (pt?.type === 'partner_with') lbl.innerHTML = `Partner — debe ser <strong>${pt.name}</strong>`;
+        else if (pt === 'background_chooser') lbl.innerHTML = 'Background <span style="font-size:11px;color:var(--color-text-secondary);">(elegí un Background)</span>';
+        else if (pt === 'background') lbl.innerHTML = 'Commander <span style="font-size:11px;color:var(--color-text-secondary);">(elegí uno con Choose a Background)</span>';
+        else if (pt === 'friends_forever') lbl.innerHTML = 'Friends Forever <span style="font-size:11px;color:var(--color-text-secondary);">(elegí otro Friends Forever)</span>';
+        else lbl.innerHTML = 'Partner <span style="font-size:11px;color:var(--color-text-secondary);">(segundo comandante)</span>';
+      }
+      // Clear partner input and error
+      const inp2 = document.getElementById('d-commander2');
+      if (inp2) inp2.value = '';
+      const err = document.getElementById('partner-error');
+      if (err) err.style.display = 'none';
+    } else {
+      partnerSlot.style.display = 'none';
+    }
+  }
+
+  // Apply colors from card 1 only (card 2 not selected yet)
+  applyColors(card.color_identity || []);
+}
+
+function selectCommander2(idx) {
+  const card = _commander2Cards[idx];
+  if (!card) return;
+
+  // Validate against commander 1
+  if (_selectedCard1) {
+    // Check not the same card
+    if (card.name.toLowerCase() === _selectedCard1.name.toLowerCase()) {
+      const err = document.getElementById('partner-error');
+      if (err) { err.textContent = 'No podés usar el mismo comandante dos veces.'; err.style.display = 'block'; }
+      return;
+    }
+    const check = areLegalPartners(_selectedCard1, card);
+    if (!check.ok) {
+      const err = document.getElementById('partner-error');
+      if (err) { err.textContent = check.msg; err.style.display = 'block'; }
+      return;
+    }
+  }
+
+  _selectedCard2 = card;
+  const input = document.getElementById('d-commander2');
+  if (input) input.value = card.name;
+  const sugEl = document.getElementById('commander2-suggestions');
+  if (sugEl) sugEl.style.display = 'none';
+  const err = document.getElementById('partner-error');
+  if (err) err.style.display = 'none';
+
+  // Merge colors from both commanders
+  const c1 = _selectedCard1?.color_identity || [];
+  const c2 = card.color_identity || [];
+  applyColors(c1, c2);
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -370,12 +533,20 @@ function addDeck() {
   const pid = window.AUTH?.user?.uid;
   if (!pid) { alert('No estás logueado.'); return; }
   const name = document.getElementById('d-name').value.trim();
-  const commander = document.getElementById('d-commander').value.trim();
+  const commander1 = document.getElementById('d-commander')?.value.trim() || '';
+  const commander2 = document.getElementById('d-commander2')?.value.trim() || '';
+  const commanderFull = commander2 ? `${commander1} + ${commander2}` : commander1;
   if (!name) { alert('Ingresá un nombre para el mazo.'); return; }
+  if (!commander1) { alert('Buscá y seleccioná un comandante.'); return; }
+  // Validate partner if slot is visible and has text
+  if (commander2 && _selectedCard1 && _selectedCard2) {
+    const check = areLegalPartners(_selectedCard1, _selectedCard2);
+    if (!check.ok) { alert(check.msg); return; }
+  }
   const colors = [...document.querySelectorAll('#color-picker input:checked')].map(c => c.value);
   if (colors.length === 0) { alert('Seleccioná al menos un color para el mazo.'); return; }
   const sharedWith = [...document.querySelectorAll('#deck-share-pgs input:checked')].map(cb => cb.value);
-  DB.decks.push({ id: uid(), playerId: pid, name, commander, colors, sharedWith, createdAt: Date.now() });
+  DB.decks.push({ id: uid(), playerId: pid, name, commander: commanderFull, commanderFull, colors, sharedWith, createdAt: Date.now() });
   save(); renderAll();
 }
 
@@ -403,8 +574,14 @@ function cancelEditDeck() {
 
 function saveEditDeck() {
   const name = document.getElementById('d-name').value.trim();
-  const commander = document.getElementById('d-commander').value.trim();
+  const commander1 = document.getElementById('d-commander')?.value.trim() || '';
+  const commander2 = document.getElementById('d-commander2')?.value.trim() || '';
+  const commanderFull = commander2 ? `${commander1} + ${commander2}` : commander1;
   if (!name) { alert('Ingresá un nombre para el mazo.'); return; }
+  if (commander2 && _selectedCard1 && _selectedCard2) {
+    const check = areLegalPartners(_selectedCard1, _selectedCard2);
+    if (!check.ok) { alert(check.msg); return; }
+  }
   const colors = [...document.querySelectorAll('#color-picker input:checked')].map(c => c.value);
   if (!colors.length) { alert('Seleccioná al menos un color (buscá el comandante para autodetectarlos).'); return; }
   const deck = DB.decks.find(d => d.id === editingDeckId);
@@ -420,8 +597,15 @@ function saveEditDeck() {
     const cacheKey = (deck.commander || '').toLowerCase();
     if (_imgCache[cacheKey] !== undefined) delete _imgCache[cacheKey];
   }
+  // Clear cached image if commander changed
+  if (deck.commander !== commanderFull) {
+    deck.scryfallImg = null;
+    const cacheKey = (deck.commander || '').toLowerCase();
+    if (_imgCache[cacheKey] !== undefined) delete _imgCache[cacheKey];
+  }
   deck.name = name;
-  deck.commander = commander;
+  deck.commander = commanderFull;
+  deck.commanderFull = commanderFull;
   deck.colors = colors;
   deck.sharedWith = [...document.querySelectorAll('#deck-share-pgs input:checked')].map(cb => cb.value);
   editingDeckId = null;
@@ -442,11 +626,13 @@ function clearDeckFilters() {
 const _imgCache = {};
 async function fetchCommanderImage(deck) {
   if (!deck.commander || deck.scryfallImg) return;
-  const key = deck.commander.toLowerCase();
+  // Use only first commander name for art (e.g. "Sidar + Tana" -> "Sidar")
+  const primaryName = deck.commander.split(' + ')[0].trim();
+  const key = primaryName.toLowerCase();
   if (_imgCache[key] === null) return; // known miss
   if (_imgCache[key]) { deck.scryfallImg = _imgCache[key]; renderDecks(); return; }
   try {
-    const url = `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(deck.commander)}&format=json`;
+    const url = `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(primaryName)}&format=json`;
     const res = await fetch(url);
     if (!res.ok) { _imgCache[key] = null; return; }
     const card = await res.json();
@@ -1556,7 +1742,7 @@ function renderPgDetail(el, pgId) {
         <div style="font-family:'Cinzel',serif;font-size:18px;font-weight:600;color:var(--gold);">${pg.name}</div>
         <div style="font-size:11px;color:var(--text-sub);">${members.length} miembros · Código: <span style="color:var(--gold);font-weight:700;">${pg.code}</span></div>
       </div>
-      <button class="btn btn-sm btn-danger" style="margin-left:auto;" onclick="window.__leavePg('${pg.id}','${pg.name.replace(/'/g,"\\'")}')">Salir</button>
+      <button class="btn btn-sm btn-danger" style="margin-left:auto;" onclick="window.__leavePg('${pg.id}','${pg.name.replace(/'/g,"\\'")}')">Abandonar</button>
     </div>
 
     <div class="stats-grid" style="margin-bottom:1.25rem;">
@@ -1816,8 +2002,10 @@ window.deleteDeck = deleteDeck;
 window.onDeckInput = onDeckInput;
 window.selectDeck = selectDeck;
 window.rerenderDeckForm = rerenderDeckForm;
-window.onCommanderInput = onCommanderInput;
-window.selectCommander = selectCommander;
+window.onCommanderInput  = onCommanderInput;
+window.onCommander2Input = onCommander2Input;
+window.selectCommander   = selectCommander;
+window.selectCommander2  = selectCommander2;
 
 window.startSession = startSession;
 window.endSession = endSession;
