@@ -381,10 +381,11 @@ function onCommander2Input() {
   // For "partner with", filter to just the specific partner
   const p1 = _selectedCard1 ? getPartnerType(_selectedCard1) : null;
   let extraFilter = '';
-  if (p1?.type === 'partner_with') extraFilter = `+"${p1.name}"`;
-  else if (p1 === 'background_chooser') extraFilter = '+t:background';
-  else if (p1 === 'background') extraFilter = '+is:commander';
-  else extraFilter = '';
+  if (p1?.type === 'partner_with') extraFilter = `+!"${p1.name}"`;
+  else if (p1 === 'background_chooser') extraFilter = '+t:background+-is:commander';
+  else if (p1 === 'background')         extraFilter = '+o:"Choose a Background"';
+  else if (p1 === 'friends_forever')    extraFilter = '+o:"Friends forever"';
+  else if (p1 === 'partner')            extraFilter = '+o:"Partner"';
   _scryfallTimer2 = setTimeout(() => fetchCommanderSuggestions(q, 2, extraFilter), 300);
 }
 
@@ -397,7 +398,7 @@ async function fetchCommanderSuggestions(q, slot = 1, extraFilter = '') {
   try {
     const base = slot === 1
       ? `https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}+is:commander&order=name&unique=cards`
-      : `https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}${extraFilter}&order=name&unique=cards`;
+      : `https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}+is:commander${extraFilter}&order=name&unique=cards`;
     const res  = await fetch(base);
     if (!res.ok) { sugEl.style.display = 'none'; return; }
     const data = await res.json();
@@ -586,17 +587,6 @@ function saveEditDeck() {
   if (!colors.length) { alert('Seleccioná al menos un color (buscá el comandante para autodetectarlos).'); return; }
   const deck = DB.decks.find(d => d.id === editingDeckId);
   if (!deck) return;
-  // If commander changed, clear cached image so it refetches
-  if (deck.commander !== commander) {
-    deck.scryfallImg = null;
-    const cacheKey = (deck.commander || '').toLowerCase();
-    if (_imgCache[cacheKey] !== undefined) delete _imgCache[cacheKey];
-  }
-  if (deck.commander !== commander) {
-    deck.scryfallImg = null;
-    const cacheKey = (deck.commander || '').toLowerCase();
-    if (_imgCache[cacheKey] !== undefined) delete _imgCache[cacheKey];
-  }
   // Clear cached image if commander changed
   if (deck.commander !== commanderFull) {
     deck.scryfallImg = null;
