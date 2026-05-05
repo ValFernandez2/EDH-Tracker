@@ -301,6 +301,7 @@ function getPartnerType(card) {
   if (pwMatch) return { type: 'partner_with', name: pwMatch[1].trim() };
   if (kw.includes('friends forever')) return 'friends_forever';
   if (kw.includes('partner'))        return 'partner';
+  if (kw.includes("doctor's companion")) return 'doctors_companion';
   return null;
 }
 
@@ -333,6 +334,11 @@ function areLegalPartners(card1, card2) {
   if (p1 === 'friends_forever' && p2 === 'friends_forever') return { ok: true };
   if (p1 === 'friends_forever' || p2 === 'friends_forever')
     return { ok: false, msg: 'Friends Forever solo puede ir con otro Friends Forever.' };
+
+  // Doctor's companion — both must have it
+  if (p1 === 'doctors_companion' && p2 === 'doctors_companion') return { ok: true };
+  if (p1 === 'doctors_companion' || p2 === 'doctors_companion')
+  return { ok: false, msg: "Doctor's companion solo puede ir con otro Doctor's companion." };
 
   // Generic Partner — both must have it
   if (p1 === 'partner' && p2 === 'partner') return { ok: true };
@@ -386,6 +392,7 @@ function onCommander2Input() {
   else if (p1 === 'background')         extraFilter = '+o:"Choose a Background"';
   else if (p1 === 'friends_forever')    extraFilter = '+o:"Friends forever"';
   else if (p1 === 'partner')            extraFilter = '+o:"Partner"';
+  else if (p1 === 'doctors_companion')  extraFilter = `+o:"Doctor's companion"`;
   _scryfallTimer2 = setTimeout(() => fetchCommanderSuggestions(q, 2, extraFilter), 300);
 }
 
@@ -416,9 +423,18 @@ async function fetchCommanderSuggestions(q, slot = 1, extraFilter = '') {
         ? colors.map(c => `<span class="pip pip-${c}" style="width:12px;height:12px;font-size:7px;">${c}</span>`).join('')
         : `<span class="pip pip-C" style="width:12px;height:12px;font-size:7px;">C</span>`;
       const pt = getPartnerType(card);
-      const partnerBadge = pt
-        ? `<span style="font-size:9px;color:var(--gold);border:1px solid var(--gold-border);border-radius:10px;padding:1px 5px;margin-left:4px;">Partner</span>`
-        : '';
+      const partnerLabels = {
+        partner:            'Partner',
+        partner_with:       `Partner with`,
+        background_chooser: 'Choose a Background',
+        background:         'Background',
+        friends_forever:    'Friends Forever',
+        doctors_companion:  "Doctor's Companion",
+      };
+      const ptLabel = pt ? (partnerLabels[pt] || partnerLabels[pt?.type] || 'Partner') : null;
+      const partnerBadge = ptLabel
+      ? `<span style="font-size:9px;color:var(--gold);border:1px solid var(--gold-border);border-radius:10px;padding:1px 5px;margin-left:4px;">${ptLabel}</span>`
+      : '';
       return `<div
         onmousedown="${slot === 1 ? 'selectCommander' : 'selectCommander2'}(${idx})"
         style="padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;border-bottom:0.5px solid var(--color-border-tertiary);font-size:13px;"
