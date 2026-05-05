@@ -66,8 +66,21 @@ function initTeamSlots() {
 if (!window.teamSlots) initTeamSlots();
 
 function playerName(id) {
-  const p = DB.players.find(p=>p.id===id);
-  return p ? p.name : '—';
+  if (!id) return '—';
+  const p = DB.players.find(p => p.id === id);
+  return p ? p.name : (id.startsWith('guest_') ? id.replace('guest_','') : id);
+}
+
+function slotPlayerDisplay(slot) {
+  if (slot.playerId) return playerName(slot.playerId);
+  if (slot.playerName) return slot.playerName;
+  return '—';
+}
+
+function slotDeckDisplay(slot) {
+  if (slot.deckId) return deckName(slot.deckId);
+  if (slot.deckLabel) return slot.deckLabel;
+  return '—';
 }
 function deckName(id) {
   const d = DB.decks.find(d=>d.id===id);
@@ -669,61 +682,128 @@ function addFFASlot() {
   renderMatch();
 }
 
-function onDeckInput(i, value) {
-  const el = document.getElementById(`deck-suggestions-${i}`);
+function onDeckInput(slotKey, value) {
+  const el = document.getElementById(`deck-suggestions-${slotKey}`);
   if (!el) return;
-
   const q = value.toLowerCase();
-  if (q.length < 1) { el.style.display = 'none'; return; }
+  if (q.length < 2) { el.style.display = 'none'; return; }
 
-  // Si hay playgroup seleccionado, solo mostrar mazos de ese pg
-  let availableDecks = DB.decks;
-  if (matchPlaygroupId) {
-    availableDecks = DB.decks.filter(d =>
+  const myUid  = window.AUTH?.user?.uid;
+  const hasPg  = !!matchPlaygroupId;
+
+  // Determine which player owns this slot (to detect "is me")
+  let slotPlayerId = null;
+  if (typeof slotKey === 'number') {
+    slotPlayerId = window.ffaSlots[slotKey]?.playerId;
+  } else {
+    const [t, i] = slotKey.replace('t','').split('_').map(Number);
+    slotPlayerId = window.teamSlots?.[t]?.[i]?.playerId;
+  }
+  const isMe = slotPlayerId === myUid;
+
+  if (hasPg || isMe) {
+    // ── Playgroup or "I am this player" → search existing decks ──
+    let availableDecks = DB.decks.filter(d =>
       d.playerId?.startsWith('guest_') ||
       (d.sharedWith || []).includes(matchPlaygroupId) ||
-      d.playerId === window.AUTH?.user?.uid
+      d.playerId === myUid
     );
-  }
+    if (!hasPg) availableDecks = DB.decks.filter(d => d.playerId === myUid);
 
-  const matches = availableDecks.filter(d => {
-    const owner = playerName(d.playerId);
-    return (
+    const matches = availableDecks.filter(d =>
       d.name.toLowerCase().includes(q) ||
       (d.commander || '').toLowerCase().includes(q) ||
-      owner.toLowerCase().includes(q)
-    );
-  }).slice(0, 6);
+      playerName(d.playerId).toLowerCase().includes(q)
+    ).slice(0, 6);
 
-  if (!matches.length) {
-    el.innerHTML = `<div style="padding:6px;font-size:12px;">Sin resultados</div>`;
+    if (!matches.length) {
+      el.innerHTML = `<div style="padding:8px;font-size:12px;color:var(--text-sub);">Sin resultados</div>`;
+      el.style.display = 'block';
+      return;
+    }
+    el.innerHTML = matches.map(d => {
+      const owner = playerName(d.playerId);
+      return `<div onmousedown="selectDeck('${slotKey}', '${d.id}')"
+        style="padding:8px 12px;cursor:pointer;font-size:13px;"
+        onmouseover="this.style.background='var(--color-background-secondary)'"
+        onmouseout="this.style.background=''">
+        ${d.name} <span style="font-size:11px;color:var(--gold);">${d.commander || ''}</span>
+        <span style="font-size:11px;color:var(--text-sub);">(${owner})</span>
+      </div>`;
+    }).join('');
     el.style.display = 'block';
-    return;
+
+  } else {
+    // ── Personal mode, not me → search Scryfall for commander name ──
+    clearTimeout(window._deckScryfallTimer);
+    el.innerHTML = `<div style="padding:8px;font-size:12px;color:var(--text-sub);">Buscando...</div>`;
+    el.style.display = 'block';
+    window._deckScryfallTimer = setTimeout(async () => {
+      try {
+        const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}+is:commander&order=name&unique=cards`;
+        const res  = await fetch(url);
+        if (!res.ok) { el.style.display = 'none'; return; }
+        const data = await res.json();
+        if (!data.data?.length) {
+          el.innerHTML = `<div style="padding:8px;font-size:12px;color:var(--text-sub);">Sin resultados</div>`;
+          return;
+        }
+        const cards = data.data.slice(0, 6);
+        el.innerHTML = cards.map(card => {
+          const colors = (card.color_identity || []);
+          const pips = colors.length
+            ? colors.map(c => `<span class="pip pip-${c}" style="width:11px;height:11px;font-size:7px;">${c}</span>`).join('')
+            : `<span class="pip pip-C" style="width:11px;height:11px;font-size:7px;">C</span>`;
+          return `<div
+            onmousedown="selectScryfallDeck('${slotKey}', '${card.name.replace(/'/g,"\\'")}', '${JSON.stringify(colors).replace(/'/g,'').replace(/"/g,'')}' )"
+            style="padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:13px;"
+            onmouseover="this.style.background='var(--color-background-secondary)'"
+            onmouseout="this.style.background=''">
+            <div style="display:flex;gap:2px;">${pips}</div>
+            <span>${card.name}</span>
+          </div>`;
+        }).join('');
+        el.style.display = 'block';
+        // Store cards for selection
+        el._scryfallCards = cards;
+      } catch(e) { el.style.display = 'none'; }
+    }, 300);
   }
-
-  el.innerHTML = matches.map(d => {
-    const owner = playerName(d.playerId);
-    return `<div onclick="selectDeck(${i}, '${d.id}')" style="padding:6px;cursor:pointer;">
-      ${d.name} - ${d.commander || '—'} (${owner})
-    </div>`;
-  }).join('');
-
-  el.style.display = 'block';
 }
 
-function selectDeck(i, deckId) {
+function selectScryfallDeck(slotKey, cardName, colorsStr) {
+  // For personal mode: store commander name as label, no real deckId
+  const label = cardName;
+  _setSlotDeckLabel(slotKey, null, label);
+  const input = document.getElementById(`deck-input-${slotKey}`);
+  if (input) input.value = label;
+  const el = document.getElementById(`deck-suggestions-${slotKey}`);
+  if (el) el.style.display = 'none';
+}
+
+function selectDeck(slotKey, deckId) {
   const d = deckOf(deckId);
   if (!d) return;
-
-  const label = `${d.name} - ${d.commander || '—'} (${playerName(d.playerId)})`;
-
-  window.ffaSlots[i].deckId = deckId;
-
-  const input = document.getElementById(`deck-input-${i}`);
+  const label = `${d.name} - ${d.commander || '—'}`;
+  _setSlotDeckLabel(slotKey, deckId, label);
+  const input = document.getElementById(`deck-input-${slotKey}`);
   if (input) input.value = label;
-
-  const el = document.getElementById(`deck-suggestions-${i}`);
+  const el = document.getElementById(`deck-suggestions-${slotKey}`);
   if (el) el.style.display = 'none';
+}
+
+function _setSlotDeckLabel(slotKey, deckId, label) {
+  if (typeof slotKey === 'number' || /^\d+$/.test(String(slotKey))) {
+    const i = parseInt(slotKey);
+    window.ffaSlots[i].deckId    = deckId || '';
+    window.ffaSlots[i].deckLabel = deckId ? '' : label; // label only for non-deck (Scryfall)
+  } else {
+    const [t, i] = slotKey.replace('t','').split('_').map(Number);
+    if (!window.teamSlots[t]) window.teamSlots[t] = [];
+    if (!window.teamSlots[t][i]) window.teamSlots[t][i] = {};
+    window.teamSlots[t][i].deckId    = deckId || '';
+    window.teamSlots[t][i].deckLabel = deckId ? '' : label;
+  }
 }
 
 function removeFFASlot(index) {
@@ -734,9 +814,38 @@ function removeFFASlot(index) {
 }
 
 function updateFFASlotPlayer(i, playerId) {
-  window.ffaSlots[i].playerId = playerId;
-  window.ffaSlots[i].deckId = ""; // reset deck
+  window.ffaSlots[i].playerId   = playerId;
+  window.ffaSlots[i].playerName = '';
+  window.ffaSlots[i].deckId     = '';
+  window.ffaSlots[i].deckLabel  = '';
   renderMatch();
+}
+
+function updateFFASlotPlayerName(i, name) {
+  window.ffaSlots[i].playerId   = '';
+  window.ffaSlots[i].playerName = name;
+  window.ffaSlots[i].deckId     = '';
+  window.ffaSlots[i].deckLabel  = '';
+  // Check if name matches current user
+  const myName = window.AUTH?.user?.displayName || '';
+  if (name && myName && name.toLowerCase() === myName.toLowerCase()) {
+    window.ffaSlots[i].playerId = window.AUTH.user.uid;
+    renderMatch(); // re-render to switch to deck picker
+  }
+}
+
+function updateTeamSlotPlayerName(t, i, name) {
+  if (!window.teamSlots[t]) window.teamSlots[t] = [];
+  if (!window.teamSlots[t][i]) window.teamSlots[t][i] = {};
+  window.teamSlots[t][i].playerId   = '';
+  window.teamSlots[t][i].playerName = name;
+  window.teamSlots[t][i].deckId     = '';
+  window.teamSlots[t][i].deckLabel  = '';
+  const myName = window.AUTH?.user?.displayName || '';
+  if (name && myName && name.toLowerCase() === myName.toLowerCase()) {
+    window.teamSlots[t][i].playerId = window.AUTH.user.uid;
+    renderMatch();
+  }
 }
 
 function updateFFASlotDeck(i, value) {
@@ -789,10 +898,11 @@ function renderMatch() {
 
   let html = `<div class="card-box">`;
 
-  html += renderSessionBar();        // 👈 nuevo
-  html += renderMatchType();         // 👈 extraído
-  html += renderMatchSlotsWrapper(); // 👈 extraído
-  html += renderMatchFooter();       // 👈 extraído
+  html += renderSessionBar();
+  html += renderMatchPlaygroupSelector(); // playgroup FIRST — drives player/deck context
+  html += renderMatchType();
+  html += renderMatchSlotsWrapper();
+  html += renderMatchFooter();
 
   html += `</div>`;
 
@@ -818,6 +928,27 @@ function renderSessionBar() {
       <button class="btn btn-sm" onclick="startSession()">Nueva sesión</button>
     </div>
   `;
+}
+
+function renderMatchPlaygroupSelector() {
+  const pgs = window.AUTH?.playgroups || [];
+  if (!pgs.length) return '';
+
+  const options = pgs.map(pg =>
+    `<option value="${pg.id}" ${matchPlaygroupId === pg.id ? 'selected' : ''}>${pg.name}</option>`
+  ).join('');
+
+  return `<div style="margin-bottom:14px;">
+    <div class="section-title" style="margin-bottom:8px;">Playgroup</div>
+    <select id="m-playgroup" onchange="setMatchPlaygroup(this.value)" style="max-width:260px;">
+      <option value="">— partida personal —</option>
+      ${options}
+    </select>
+    ${matchPlaygroupId
+      ? `<div style="font-size:11px;color:var(--text-sub);margin-top:5px;">Jugadores y mazos limitados al playgroup.</div>`
+      : `<div style="font-size:11px;color:var(--text-sub);margin-top:5px;">Sin playgroup: ingresá jugadores y mazos manualmente.</div>`
+    }
+  </div>`;
 }
 
 function renderMatchType() {
@@ -846,40 +977,53 @@ function renderMatchSlotsWrapper() {
 
 function renderFFA() {
   let html = '';
-  const slots = window.ffaSlots;
+  const slots      = window.ffaSlots;
+  const myUid      = window.AUTH?.user?.uid;
+  const hasPg      = !!matchPlaygroupId;
+  const pg         = hasPg ? (window.AUTH?.playgroups || []).find(p => p.id === matchPlaygroupId) : null;
+  const pgMembers  = pg ? Object.entries(pg.members || {}).map(([id, m]) => ({ id, name: m.displayName })) : [];
 
   const usedPlayers = slots.map(s => s.playerId).filter(Boolean);
-  const usedDecks = slots.map(s => s.deckId).filter(Boolean);
 
-  for(let i=0;i<slots.length;i++) {
+  for (let i = 0; i < slots.length; i++) {
     const slot = slots[i];
+    const isMe = slot.playerId === myUid;
 
+    // Deck label for existing selection
     const deckLabel = slot.deckId
       ? (() => {
           const d = deckOf(slot.deckId);
-          return d ? `${d.name} - ${d.commander || '—'} (${playerName(d.playerId)})` : '';
+          return d ? `${d.name} - ${d.commander || '—'}` : (slot.deckLabel || '');
         })()
-      : '';
+      : (slot.deckLabel || '');
+
+    // Player selector: dropdown if playgroup, text input if personal
+    const playerControl = hasPg
+      ? `<select style="flex:0 0 160px;" onchange="updateFFASlotPlayer(${i}, this.value)">
+          <option value="">Seleccionar jugador</option>
+          ${pgMembers
+            .filter(m => !usedPlayers.includes(m.id) || m.id === slot.playerId)
+            .map(m => `<option value="${m.id}" ${m.id === slot.playerId ? 'selected' : ''}>${m.name}</option>`)
+            .join('')}
+        </select>`
+      : `<input type="text" style="flex:0 0 160px;"
+          placeholder="Nombre del jugador"
+          value="${slot.playerName || ''}"
+          oninput="updateFFASlotPlayerName(${i}, this.value)"
+          autocomplete="off">`;
 
     html += `
     <div class="player-slot" style="display:flex;align-items:center;gap:6px;">
+      ${slots.length > 1 ? `<button class="btn btn-sm btn-danger" onclick="removeFFASlot(${i})">×</button>` : ''}
 
-      ${slots.length > 1 ? `
-        <button class="btn btn-sm btn-danger" onclick="removeFFASlot(${i})">×</button>
-      ` : ''}
-
-      <select 
-        style="flex:0 0 160px;" 
-        onchange="updateFFASlotPlayer(${i}, this.value)">
-        ${playerOptions(slot.playerId, usedPlayers.filter(id => id !== slot.playerId))}
-      </select>
+      ${playerControl}
 
       <div style="position:relative; flex:1;">
-        <input 
+        <input
           type="text"
           style="width:100%;"
           id="deck-input-${i}"
-          placeholder="Buscar mazo"
+          placeholder="${hasPg || isMe ? 'Buscar mazo' : 'Comandante del mazo'}"
           value="${deckLabel}"
           oninput="onDeckInput(${i}, this.value)"
           onclick="this.select()"
@@ -892,12 +1036,11 @@ function renderFFA() {
       <label class="won-toggle">
         <input type="radio" name="ffa-result" value="win-${i}"> ganó
       </label>
-
     </div>`;
   }
 
-  if(slots.length < 8) {
-    html += `<button class="btn btn-sm" onclick="addFFASlot()">+ Agregar jugador</button>`;
+  if (slots.length < 8) {
+    html += `<button class="btn btn-sm" style="margin-top:6px;" onclick="addFFASlot()">+ Agregar jugador</button>`;
   }
 
   html += `
@@ -912,12 +1055,13 @@ function renderFFA() {
 
 function renderTeams() {
   let html = '';
-
   const { numTeams, playersPerTeam } = window.teamConfig;
-  const slots = window.teamSlots;
-
-  const usedPlayers = window.teamSlots.flat().map(s=>s.playerId).filter(Boolean);
-  const usedDecks = window.teamSlots.flat().map(s=>s.deckId).filter(Boolean);
+  const slots      = window.teamSlots;
+  const myUid      = window.AUTH?.user?.uid;
+  const hasPg      = !!matchPlaygroupId;
+  const pg         = hasPg ? (window.AUTH?.playgroups || []).find(p => p.id === matchPlaygroupId) : null;
+  const pgMembers  = pg ? Object.entries(pg.members || {}).map(([id, m]) => ({ id, name: m.displayName })) : [];
+  const usedPlayers = window.teamSlots.flat().map(s => s.playerId).filter(Boolean);
 
   html += `<div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
     <div style="display:flex;align-items:center;gap:6px;">
@@ -935,55 +1079,56 @@ function renderTeams() {
   </div>`;
 
   const teamColors = ['var(--gold)','#6a9fc8','#60a860','#c87060'];
-  const teamNames = ['Equipo 1','Equipo 2','Equipo 3','Equipo 4'];
+  const teamNames  = ['Equipo 1','Equipo 2','Equipo 3','Equipo 4'];
 
-  for(let t=0; t<numTeams; t++) {
+  for (let t = 0; t < numTeams; t++) {
     const tSlots = slots[t] || [];
-
     html += `<div style="border-left:3px solid ${teamColors[t]};padding-left:10px;margin-bottom:12px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
         <div style="font-size:13px;font-weight:500;color:var(--color-text-primary);">${teamNames[t]}</div>
-        <label class="won-toggle">
-          <input type="radio" name="team-result" value="${t}"> ganó
-        </label>
+        <label class="won-toggle"><input type="radio" name="team-result" value="${t}"> ganó</label>
       </div>`;
 
-    for(let i=0; i<playersPerTeam; i++) {
-      const slot = tSlots[i] || { playerId: '', deckId: '' };
+    for (let i = 0; i < playersPerTeam; i++) {
+      const slot  = tSlots[i] || { playerId: '', deckId: '' };
+      const isMe  = slot.playerId === myUid;
+      const deckLabel = slot.deckId
+        ? (() => { const d = deckOf(slot.deckId); return d ? `${d.name} - ${d.commander || '—'}` : (slot.deckLabel || ''); })()
+        : (slot.deckLabel || '');
+      const slotKey = `t${t}_${i}`;
 
-      const deckLabel = slot.deckId ? (() => {
-      const d = deckOf(slot.deckId);
-      return d ? `${d.name} - ${d.commander || '—'} (${playerName(d.playerId)})` : '';
-      })() : '';
+      const playerControl = hasPg
+        ? `<select onchange="updateTeamSlotPlayer(${t},${i},this.value)">
+            <option value="">Seleccionar jugador</option>
+            ${pgMembers
+              .filter(m => !usedPlayers.includes(m.id) || m.id === slot.playerId)
+              .map(m => `<option value="${m.id}" ${m.id === slot.playerId ? 'selected' : ''}>${m.name}</option>`)
+              .join('')}
+          </select>`
+        : `<input type="text" placeholder="Nombre del jugador"
+            value="${slot.playerName || ''}"
+            oninput="updateTeamSlotPlayerName(${t},${i},this.value)"
+            autocomplete="off">`;
 
       html += `<div class="player-slot" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px;">
-        <select onchange="updateTeamSlotPlayer(${t},${i},this.value)">
-          ${playerOptions(slot.playerId,usedPlayers.filter(id => id !== slot.playerId))}
-        </select>
+        ${playerControl}
         <div style="position:relative;">
-      <input 
-      type="text"
-      id="deck-input-${i}"
-      placeholder="Buscar mazo"
-      value="${deckLabel}"
-      oninput="onDeckInput(${i}, this.value)"
-      onclick="this.select()"
-      autocomplete="off"
-      >
-      <div id="deck-suggestions-${i}" class="deck-suggestions"></div>
-      </div>
+          <input type="text" id="deck-input-${slotKey}"
+            placeholder="${hasPg || isMe ? 'Buscar mazo' : 'Comandante del mazo'}"
+            value="${deckLabel}"
+            oninput="onDeckInput('${slotKey}', this.value)"
+            onclick="this.select()"
+            autocomplete="off">
+          <div id="deck-suggestions-${slotKey}" class="deck-suggestions"></div>
+        </div>
       </div>`;
     }
-
     html += '</div>';
   }
 
   html += `<div style="margin:4px 0 6px;">
-    <label class="won-toggle">
-      <input type="radio" name="team-result" value="draw"> Empate
-    </label>
+    <label class="won-toggle"><input type="radio" name="team-result" value="draw"> Empate</label>
   </div>`;
-
   return html;
 }
 
@@ -998,21 +1143,6 @@ function renderMatchFooter() {
     <div class="form-group" style="margin-bottom:0;">
       <label>Fecha</label>
       <input type="date" id="m-date" style="max-width:160px;" value="${new Date().toISOString().slice(0,10)}">
-    </div>
-    ${pgs.length ? `
-    <div class="form-group" style="margin-bottom:0;">
-      <label>Playgroup (opcional)</label>
-      <select id="m-playgroup" onchange="setMatchPlaygroup(this.value)">
-        <option value="">— personal —</option>
-        ${pgOptions}
-      </select>
-    </div>` : ''}
-    <div class="form-group" style="margin-bottom:0;">
-      <label>Torneo (opcional)</label>
-      <select id="m-tournament">
-        <option value="">— sin torneo —</option>
-        ${DB.tournaments.filter(t=>t.active).map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}
-      </select>
     </div>
   </div>
   <div style="margin-top:12px;display:flex;gap:8px;align-items:center;">
@@ -1101,14 +1231,15 @@ function saveMatch() {
     for(let t=0; t<numTeams; t++) {
       for(let i=0; i<playersPerTeam; i++){
         const slot = (tSlots[t] || [])[i] || {};
-        const pid = slot.playerId;
-        const deckId = slot.deckId;
-        if(!pid || !deckId) continue;
-        if(value === "draw") {
-          slots.push({ playerId: pid, deckId, team: t, won: false, draw: true });
-        } else {
-          slots.push({ playerId: pid, deckId, team: t, won: String(t) === value, draw: false });
-        }
+        if(!slot.playerId && !slot.deckId && !slot.playerName && !slot.deckLabel) continue;
+        const won = value === "draw" ? false : String(t) === value;
+        slots.push({
+          playerId:   slot.playerId   || null,
+          playerName: slot.playerName || null,
+          deckId:     slot.deckId     || null,
+          deckLabel:  slot.deckLabel  || null,
+          team: t, won, draw: value === "draw"
+        });
       }
     }
   }
@@ -1209,7 +1340,7 @@ function renderHistory() {
       ${pgName ? `<span class="tag-playgroup">${pgName}</span>` : ''}
       ${t ? `<span class="tag-tournament">${t.name}</span>` : ''}
       <div style="flex:1;min-width:0;">
-        ${m.slots.map(s=>`<span style="font-size:12px;margin-right:8px;${s.won?'color:var(--color-text-success);font-weight:500;':'color:var(--color-text-secondary);'}">${playerName(s.playerId)}: ${deckName(s.deckId)}${s.won?' ✓':''}</span>`).join('')}
+        ${m.slots.map(s=>`<span style="font-size:12px;margin-right:8px;${s.won?'color:var(--color-text-success);font-weight:500;':'color:var(--color-text-secondary);'}">${slotPlayerDisplay(s)}: ${slotDeckDisplay(s)}${s.won?' ✓':''}</span>`).join('')}
       </div>
       ${session ? `<span class="tag-session">${session.name}</span>` : ''}
       <button class="btn btn-sm" onclick="editMatch('${m.id}')">editar</button>
@@ -1819,7 +1950,12 @@ function renderPgDetail(el, pgId) {
           <div class="history-type">${m.type==='ffa'?'Free':'Team'}</div>
           ${t?`<span class="tag-tournament">${t.name}</span>`:''}
           <div style="flex:1;min-width:0;">
-            ${(m.slots||[]).map(s=>`<span style="font-size:12px;margin-right:8px;${s.won?'color:var(--success);font-weight:500;':'color:var(--text-sub);'}">${pgPlayerName(s.playerId)}: ${pgDeckName(s.deckId)}${s.won?' ✓':''}</span>`).join('')}
+            ${(m.slots||[]).map(s=>{
+  const pn = s.playerId ? pgPlayerName(s.playerId) : (s.playerName||'—');
+  const dn = s.deckId   ? pgDeckName(s.deckId)     : (s.deckLabel||'—');
+  const style = s.won ? 'color:var(--success);font-weight:500;' : 'color:var(--text-sub);';
+  return `<span style="font-size:12px;margin-right:8px;${style}">${pn}: ${dn}${s.won?' ✓':''}</span>`;
+}).join('')}
           </div>
         </div>`;
       }).join('') : '<div class="empty-state">Sin partidas registradas.</div>'}
@@ -2022,7 +2158,11 @@ window.renderProfile = renderProfile;
 
 window.addFFASlot = addFFASlot;
 window.removeFFASlot = removeFFASlot;
-window.updateFFASlotPlayer = updateFFASlotPlayer;
+window.updateFFASlotPlayer     = updateFFASlotPlayer;
+window.updateFFASlotPlayerName = updateFFASlotPlayerName;
+window.updateTeamSlotPlayerName = updateTeamSlotPlayerName;
+window.selectScryfallDeck      = selectScryfallDeck;
+window.renderMatchPlaygroupSelector = renderMatchPlaygroupSelector;
 window.updateFFASlotDeck = updateFFASlotDeck;
 
 window.addDeck = addDeck;
@@ -2035,6 +2175,11 @@ window.cancelEditDeck = cancelEditDeck;
 window.saveEditDeck = saveEditDeck;
 window.deleteDeck = deleteDeck;
 window.onDeckInput = onDeckInput;
+window.selectDeck  = selectDeck;
+window.selectScryfallDeck = selectScryfallDeck;
+window.updateFFASlotPlayerName  = updateFFASlotPlayerName;
+window.updateTeamSlotPlayerName = updateTeamSlotPlayerName;
+window.renderMatchPlaygroupSelector = renderMatchPlaygroupSelector;
 window.selectDeck = selectDeck;
 window.rerenderDeckForm = rerenderDeckForm;
 window.onCommanderInput  = onCommanderInput;
