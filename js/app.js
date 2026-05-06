@@ -1144,10 +1144,20 @@ function renderMatchFooter() {
   ).join('');
 
   return `
-  <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+  <div style="margin-top:12px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
     <div class="form-group" style="margin-bottom:0;">
       <label>Fecha</label>
       <input type="date" id="m-date" style="max-width:160px;" value="${new Date().toISOString().slice(0,10)}">
+    </div>
+    <div class="form-group" style="margin-bottom:0;flex:1;min-width:220px;">
+      <label>Comentario <span style="font-size:10px;color:var(--text-sub);">(opcional, máx. 140 caracteres)</span></label>
+      <div style="position:relative;">
+        <input type="text" id="m-comment" maxlength="140"
+          placeholder="Ej: Partida muy disputada, duró 10 turnos"
+          style="width:100%;padding-right:42px;"
+          oninput="document.getElementById('m-comment-count').textContent=140-this.value.length">
+        <span id="m-comment-count" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--text-sub);pointer-events:none;">140</span>
+      </div>
     </div>
   </div>
   <div style="margin-top:12px;display:flex;gap:8px;align-items:center;">
@@ -1201,6 +1211,7 @@ function updateMatchDeck2(t, i) {
 function saveMatch() {
   const date = document.getElementById('m-date').value || new Date().toISOString().slice(0,10);
   const tournamentId = document.getElementById('m-tournament')?.value || null;
+  const comment = (document.getElementById('m-comment')?.value || '').trim().slice(0, 140) || null;
   let slots = [];
 
   if(matchType === 'ffa') {
@@ -1261,9 +1272,10 @@ function saveMatch() {
     type: matchType,
     date,
     createdAt: Date.now(),
-    playgroupId: matchPlaygroupId || null,    
-    sessionId: currentSessionId,   
+    playgroupId: matchPlaygroupId || null,
+    sessionId: currentSessionId,
     tournamentId,
+    comment,
     slots
   };
 
@@ -1556,6 +1568,12 @@ function editMatch(id) {
     if (dateEl) dateEl.value = window._editMatchDate;
     const tEl = document.getElementById('m-tournament');
     if (tEl && window._editMatchTournament) tEl.value = window._editMatchTournament;
+    const commentEl = document.getElementById('m-comment');
+    if (commentEl) {
+      commentEl.value = m.comment || '';
+      const countEl = document.getElementById('m-comment-count');
+      if (countEl) countEl.textContent = 140 - (m.comment || '').length;
+    }
 
     if (m.type === 'ffa') {
       if (window._editFfaDraw) {
