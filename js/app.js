@@ -67,8 +67,22 @@ if (!window.teamSlots) initTeamSlots();
 
 function playerName(id) {
   if (!id) return '—';
+  // First check current DB players (active playgroup members)
   const p = DB.players.find(p => p.id === id);
-  return p ? p.name : (id.startsWith('guest_') ? id.replace('guest_','') : id);
+  if (p) return p.name;
+  // Then check ALL playgroups the user belongs to
+  const allPgs = window.AUTH?.playgroups || [];
+  for (const pg of allPgs) {
+    const member = pg.members?.[id];
+    if (member) return member.displayName;
+    // Check guest_ prefix against legacyId
+    const guestKey = id.replace('guest_', '');
+    const guestMember = Object.values(pg.members || {}).find(m => m.legacyId === guestKey);
+    if (guestMember) return guestMember.displayName;
+  }
+  // Last resort: strip guest_ prefix
+  if (id.startsWith('guest_')) return id.replace('guest_', '');
+  return id;
 }
 
 function slotPlayerDisplay(slot) {
@@ -83,8 +97,16 @@ function slotDeckDisplay(slot) {
   return '—';
 }
 function deckName(id) {
-  const d = DB.decks.find(d=>d.id===id);
-  return d ? d.name : 'Mazo eliminado';
+  if (!id) return '—';
+  // Check current DB decks
+  const d = DB.decks.find(d => d.id === id);
+  if (d) return d.name;
+  // Check pgCache for all playgroups
+  for (const [, pgData] of Object.entries(window._pgCache || {})) {
+    const pd = (pgData.decks || []).find(d => d.id === id);
+    if (pd) return pd.name;
+  }
+  return 'Mazo eliminado';
 }
 function deckOf(id) { return DB.decks.find(d=>d.id===id); }
 
