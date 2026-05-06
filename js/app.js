@@ -703,12 +703,17 @@ function onDeckInput(slotKey, value) {
 
   if (hasPg || isMe) {
     // ── Playgroup or "I am this player" → search existing decks ──
-    let availableDecks = DB.decks.filter(d =>
-      d.playerId?.startsWith('guest_') ||
-      (d.sharedWith || []).includes(matchPlaygroupId) ||
-      d.playerId === myUid
-    );
-    if (!hasPg) availableDecks = DB.decks.filter(d => d.playerId === myUid);
+    let availableDecks;
+    if (hasPg) {
+      // Use pgCache which has decks from all members (guests + shared)
+      const pgCacheDecks = window._pgCache?.[matchPlaygroupId]?.decks || [];
+      // Merge with DB.decks (our own, always fresh)
+      const deckMap = new Map(pgCacheDecks.map(d => [d.id, d]));
+      DB.decks.filter(d => d.playerId === myUid).forEach(d => deckMap.set(d.id, d));
+      availableDecks = Array.from(deckMap.values());
+    } else {
+      availableDecks = DB.decks.filter(d => d.playerId === myUid);
+    }
 
     const matches = availableDecks.filter(d =>
       d.name.toLowerCase().includes(q) ||
@@ -1195,7 +1200,7 @@ function updateMatchDeck2(t, i) {
 
 function saveMatch() {
   const date = document.getElementById('m-date').value || new Date().toISOString().slice(0,10);
-  const tournamentId = document.getElementById('m-tournament').value || null;
+  const tournamentId = document.getElementById('m-tournament')?.value || null;
   let slots = [];
 
   if(matchType === 'ffa') {
@@ -1270,13 +1275,20 @@ function saveMatch() {
   }
 
   if (matchPlaygroupId) {
-  // Guardar directamente en el playgroup seleccionado
-  const prevPgId = window.AUTH.pgId;
-  window.AUTH.pgId = matchPlaygroupId;
-  saveAppData(window.DB).catch(e => console.error('Save error:', e));
-  window.AUTH.pgId = prevPgId;
+    // Save directly to the selected playgroup
+    const prevPgId = window.AUTH.pgId;
+    window.AUTH.pgId = matchPlaygroupId;
+    // Merge pgCache decks (all members) into DB before saving so nothing gets lost
+    const pgCacheDecks = window._pgCache?.[matchPlaygroupId]?.decks || [];
+    const deckMap = new Map(pgCacheDecks.map(d => [d.id, d]));
+    DB.decks.forEach(d => deckMap.set(d.id, d)); // our own always take priority
+    const savedDecks = DB.decks;
+    DB.decks = Array.from(deckMap.values()); // temporarily expand for save
+    saveAppData(window.DB).catch(e => console.error('Save error:', e));
+    DB.decks = savedDecks; // restore
+    window.AUTH.pgId = prevPgId;
   } else {
-  save();
+    save();
   }
   matchPlaygroupId = null; // reset
   renderAll();
@@ -1334,7 +1346,8 @@ function renderHistory() {
     const t       = m.tournamentId ? DB.tournaments.find(t => t.id === m.tournamentId) : null;
     const session = m.sessionId    ? DB.sessions.find(s => s.id === m.sessionId)       : null;
     const pgName  = m.playgroupId  ? pgMap[m.playgroupId] : null;
-    html += `<div class="history-item">
+    const hasComment = !!m.comment;
+    html += `<div class="history-item history-item-clickable" onclick="showMatchModal('${m.id}')">
       <div class="history-date">${formatDate(m.date)}</div>
       <div class="history-type">${m.type==='ffa'?'Free':'Team'}</div>
       ${pgName ? `<span class="tag-playgroup">${pgName}</span>` : ''}
@@ -1343,12 +1356,116 @@ function renderHistory() {
         ${m.slots.map(s=>`<span style="font-size:12px;margin-right:8px;${s.won?'color:var(--color-text-success);font-weight:500;':'color:var(--color-text-secondary);'}">${slotPlayerDisplay(s)}: ${slotDeckDisplay(s)}${s.won?' ✓':''}</span>`).join('')}
       </div>
       ${session ? `<span class="tag-session">${session.name}</span>` : ''}
-      <button class="btn btn-sm" onclick="editMatch('${m.id}')">editar</button>
-      <button class="btn btn-sm btn-danger" onclick="deleteMatch('${m.id}')">×</button>
+      ${hasComment ? `<span title="${m.comment}" style="font-size:14px;opacity:0.7;">💬</span>` : ''}
     </div>`;
   });
   el.innerHTML = html;
 }
+
+// ── Match detail modal ──────────────────────────────────────────────────────
+function showMatchModal(matchId) {
+  const m = DB.matches.find(m => m.id === matchId);
+  if (!m) return;
+
+  const pgMap = {};
+  (window.AUTH?.playgroups || []).forEach(pg => { pgMap[pg.id] = pg.name; });
+
+  const t        = m.tournamentId ? DB.tournaments.find(t => t.id === m.tournamentId) : null;
+  const session  = m.sessionId    ? DB.sessions.find(s => s.id === m.sessionId)       : null;
+  const pgName   = m.playgroupId  ? pgMap[m.playgroupId] : null;
+  const isTeam   = m.type === '2v2';
+
+  // Group slots by team for team matches
+  const slotsByTeam = {};
+  if (isTeam) {
+    (m.slots || []).forEach(s => {
+      const t = s.team ?? 0;
+      if (!slotsByTeam[t]) slotsByTeam[t] = [];
+      slotsByTeam[t].push(s);
+    });
+  }
+
+  const teamColors = ['var(--gold)','#6a9fc8','#60a860','#c87060'];
+  const teamNames  = ['Equipo 1','Equipo 2','Equipo 3','Equipo 4'];
+
+  let slotsHtml = '';
+  if (isTeam) {
+    Object.entries(slotsByTeam).forEach(([t, tSlots]) => {
+      const ti = parseInt(t);
+      const teamWon = tSlots.some(s => s.won);
+      const teamDraw = tSlots.some(s => s.draw);
+      slotsHtml += `<div style="border-left:3px solid ${teamColors[ti]||'var(--border)'};padding-left:12px;margin-bottom:12px;">
+        <div style="font-size:12px;font-weight:700;color:${teamColors[ti]||'var(--text-sub)'};margin-bottom:6px;text-transform:uppercase;letter-spacing:0.06em;">
+          ${teamNames[ti]||`Equipo ${ti+1}`}
+          ${teamWon ? '<span style="color:var(--success);margin-left:8px;">✓ Ganó</span>' : ''}
+          ${teamDraw ? '<span style="color:var(--text-sub);margin-left:8px;">Empate</span>' : ''}
+        </div>
+        ${tSlots.map(s => `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-subtle);">
+          <div style="flex:1;">
+            <div style="font-size:14px;font-weight:500;">${slotPlayerDisplay(s)}</div>
+            <div style="font-size:12px;color:var(--gold);">${slotDeckDisplay(s)}</div>
+          </div>
+        </div>`).join('')}
+      </div>`;
+    });
+  } else {
+    const draw = (m.slots||[]).some(s => s.draw);
+    slotsHtml = (m.slots||[]).map(s => `
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-subtle);">
+        <div style="flex:1;">
+          <div style="font-size:14px;font-weight:${s.won?'700':'400'};color:${s.won?'var(--text)':'var(--text-sub)'};">${slotPlayerDisplay(s)}</div>
+          <div style="font-size:12px;color:var(--gold);">${slotDeckDisplay(s)}</div>
+        </div>
+        ${s.won ? '<span style="font-size:18px;">🏆</span>' : ''}
+        ${draw  ? '<span style="font-size:12px;color:var(--text-sub);">Empate</span>' : ''}
+      </div>`).join('');
+  }
+
+  const overlay = document.getElementById('modal-overlay');
+  const box     = document.getElementById('modal-box');
+  if (!overlay || !box) return;
+
+  box.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div>
+        <div style="font-family:'Cinzel',serif;font-size:16px;font-weight:600;color:var(--gold);">
+          ${m.type === 'ffa' ? 'Todos contra Todos' : 'Por Equipos'}
+        </div>
+        <div style="font-size:12px;color:var(--text-sub);margin-top:2px;">
+          ${formatDate(m.date)}
+          ${pgName   ? ` · <span style="color:#6a9fc8;">${pgName}</span>`    : ''}
+          ${t        ? ` · <span style="color:var(--gold);">${t.name}</span>` : ''}
+          ${session  ? ` · ${session.name}`                                   : ''}
+        </div>
+      </div>
+      <button class="btn btn-sm" onclick="closeModal()">✕</button>
+    </div>
+
+    <div style="margin-bottom:14px;">${slotsHtml}</div>
+
+    ${m.comment ? `
+    <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-md);padding:10px 14px;margin-bottom:14px;">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-sub);margin-bottom:4px;">Comentario</div>
+      <div style="font-size:13px;color:var(--text);">${m.comment}</div>
+    </div>` : ''}
+
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-sm" onclick="closeModal();editMatch('${m.id}')">Editar</button>
+      <button class="btn btn-sm btn-danger" onclick="closeModal();deleteMatch('${m.id}')">Eliminar</button>
+    </div>
+  `;
+
+  overlay.classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay')?.classList.remove('open');
+}
+
+// Close modal on overlay click
+document.getElementById('modal-overlay')?.addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeModal();
+});
 
 function applyHistoryFilters(matches) {
   return matches.filter(m => {
@@ -2153,6 +2270,8 @@ window.addPlayer = addPlayer;
 window.deletePlayer = deletePlayer;
 
 window.showTab = showTab;
+window.showMatchModal = showMatchModal;
+window.closeModal = closeModal;
 window.renderPlaygroups = renderPlaygroups;
 window.renderProfile = renderProfile;
 
