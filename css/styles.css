@@ -121,6 +121,7 @@ html, body {
 .nav-btn.active {
   background: #000;
   color: var(--gold);
+  flex: 1;
   border-bottom-color: #000;
 }
 
