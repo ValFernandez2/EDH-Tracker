@@ -283,7 +283,9 @@ export async function loadAppData() {
   // Merge: user's own decks take priority (overwrite by id if already in pg decks)
   // Also load decks from other real members that are shared with this pg
   const deckMap = new Map(decks.map(d => [d.id, d]));
-  myDecks.forEach(d => deckMap.set(d.id, d));
+  myDecks
+  .filter(d => (d.sharedWith || []).includes(pgId) || !pgId)
+  .forEach(d => deckMap.set(d.id, d));
 
   // For each real (non-guest) member, load their decks shared with this pg
   if (pg) {
@@ -314,7 +316,7 @@ export async function saveAppData(DB) {
   const uid  = AUTH.user?.uid;
   const pgId = AUTH.pgId;
 
-  // Save each deck that belongs to current user
+  // Save current user's own decks to their subcollection
   if (uid) {
     for (const deck of DB.decks) {
       if (deck.playerId === uid) await saveUserDeck(uid, deck);
@@ -323,11 +325,12 @@ export async function saveAppData(DB) {
 
   // Save playgroup data
   if (pgId) {
-    // Include guest decks (no account) and current user's decks shared with this pg
-    const decksForPg = (DB.decks || []).filter(d =>
-      d.playerId?.startsWith('guest_') ||
-      (d.playerId === uid && (d.sharedWith || []).includes(pgId))
-    );
+  // Guests van siempre al pg (no tienen subcollection propia)
+  const decksForPg = (DB.decks || []).filter(d =>
+    d.playerId?.startsWith('guest_') ||
+    (d.playerId === uid && (d.sharedWith || []).includes(pgId))
+  );
+
     await savePlaygroupData(pgId, {
       matches:     DB.matches     || [],
       tournaments: DB.tournaments || [],
@@ -336,6 +339,7 @@ export async function saveAppData(DB) {
     });
   }
 }
+
 
 export async function deleteAppDeck(deckId) {
   const uid = AUTH.user?.uid;

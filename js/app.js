@@ -729,10 +729,19 @@ function onDeckInput(slotKey, value) {
     if (hasPg) {
       // Use pgCache which has decks from all members (guests + shared)
       const pgCacheDecks = window._pgCache?.[matchPlaygroupId]?.decks || [];
-      // Merge with DB.decks (our own, always fresh)
       const deckMap = new Map(pgCacheDecks.map(d => [d.id, d]));
+      // Always merge our own fresh decks
       DB.decks.filter(d => d.playerId === myUid).forEach(d => deckMap.set(d.id, d));
       availableDecks = Array.from(deckMap.values());
+      // If cache seems empty, trigger a background reload
+      if (!pgCacheDecks.length) {
+        const pg = (window.AUTH?.playgroups || []).find(p => p.id === matchPlaygroupId);
+        if (pg) loadAllPgDecks(pg, []).then(decks => {
+          if (!window._pgCache) window._pgCache = {};
+          if (!window._pgCache[matchPlaygroupId]) window._pgCache[matchPlaygroupId] = {};
+          window._pgCache[matchPlaygroupId].decks = decks;
+        });
+      }
     } else {
       availableDecks = DB.decks.filter(d => d.playerId === myUid);
     }
@@ -2123,28 +2132,11 @@ function renderPgDetail(el, pgId) {
 }
 
 window.__openPgDetail = async (pgId) => {
-  const { loadPlaygroupData, loadUserDecks } = await import('./firebase.js');
+  const { loadPlaygroupData } = await import('./firebase.js');
   if (!window._pgCache) window._pgCache = {};
   const pgData = await loadPlaygroupData(pgId);
-
-  // Merge in decks from real (non-guest) members shared with this pg
   const pg = (window.AUTH?.playgroups || []).find(p => p.id === pgId);
-  const deckMap = new Map((pgData.decks || []).map(d => [d.id, d]));
-
-  if (pg) {
-    const realMembers = Object.entries(pg.members || {})
-      .filter(([uid, m]) => !m.isGuest);
-    for (const [memberUid] of realMembers) {
-      try {
-        const memberDecks = await loadUserDecks(memberUid);
-        memberDecks
-          .filter(d => (d.sharedWith || []).includes(pgId))
-          .forEach(d => deckMap.set(d.id, d));
-      } catch(e) { /* skip */ }
-    }
-  }
-
-  pgData.decks = Array.from(deckMap.values());
+  if (pg) pgData.decks = await loadAllPgDecks(pg, pgData.decks);
   window._pgCache[pgId] = pgData;
   activePgDetailId = pgId;
   renderPlaygroups();
@@ -2271,24 +2263,31 @@ async function loadAndRender() {
   renderAll();
 }
 
+// Load ALL decks visible in a playgroup: guests + every member's shared decks
+async function loadAllPgDecks(pg, pgDataDecks) {
+  const { loadUserDecks } = await import('./firebase.js');
+  const deckMap = new Map((pgDataDecks || []).map(d => [d.id, d]));
+  const members = Object.entries(pg.members || {});
+  for (const [memberId, m] of members) {
+    if (m.isGuest) continue;
+    try {
+      const memberDecks = await loadUserDecks(memberId);
+      memberDecks
+        .filter(d => (d.sharedWith || []).includes(pg.id))
+        .forEach(d => deckMap.set(d.id, d));
+    } catch(e) { /* skip */ }
+  }
+  return Array.from(deckMap.values());
+}
+
 async function preloadPgStats() {
-  const { loadPlaygroupData, loadUserDecks } = await import('./firebase.js');
+  const { loadPlaygroupData } = await import('./firebase.js');
   if (!window._pgCache) window._pgCache = {};
   const pgs = window.AUTH?.playgroups || [];
   await Promise.all(pgs.map(async pg => {
     try {
       const pgData = await loadPlaygroupData(pg.id);
-      // Merge real member decks shared with this pg
-      const deckMap = new Map((pgData.decks || []).map(d => [d.id, d]));
-      const realMembers = Object.entries(pg.members || {}).filter(([,m]) => !m.isGuest);
-      for (const [memberUid] of realMembers) {
-        try {
-          const memberDecks = await loadUserDecks(memberUid);
-          memberDecks.filter(d => (d.sharedWith||[]).includes(pg.id))
-                     .forEach(d => deckMap.set(d.id, d));
-        } catch(e) { /* skip */ }
-      }
-      pgData.decks = Array.from(deckMap.values());
+      pgData.decks = await loadAllPgDecks(pg, pgData.decks);
       window._pgCache[pg.id] = pgData;
     } catch(e) { /* silent */ }
   }));
