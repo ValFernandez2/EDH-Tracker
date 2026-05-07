@@ -328,7 +328,7 @@ export async function saveAppData(DB) {
   // Guests van siempre al pg (no tienen subcollection propia)
   const decksForPg = (DB.decks || []).filter(d =>
     d.playerId?.startsWith('guest_') ||
-    (d.playerId === uid && (d.sharedWith || []).includes(pgId))
+    (d.sharedWith || []).includes(pgId)
   );
 
     await savePlaygroupData(pgId, {
