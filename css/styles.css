@@ -113,15 +113,16 @@ html, body {
   white-space: nowrap;
   transition: background 0.15s, color 0.15s;
   margin-bottom: -3px;
+  flex: 1;
 }
 .nav-btn:hover:not(.active) {
   background: rgba(0,0,0,0.12);
   color: #1a1000;
 }
+
 .nav-btn.active {
   background: #000;
   color: var(--gold);
-  flex: 1;
   border-bottom-color: #000;
 }
 
