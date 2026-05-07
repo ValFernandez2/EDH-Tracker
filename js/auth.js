@@ -316,28 +316,37 @@ export async function saveAppData(DB) {
   const uid  = AUTH.user?.uid;
   const pgId = AUTH.pgId;
 
-  // Save current user's own decks to their subcollection
+  // 1. Guardar los mazos propios en la subcollection del usuario
   if (uid) {
     for (const deck of DB.decks) {
       if (deck.playerId === uid) await saveUserDeck(uid, deck);
     }
   }
 
-  // Save playgroup data
-  if (pgId) {
-  // Guests van siempre al pg (no tienen subcollection propia)
-  const decksForPg = (DB.decks || []).filter(d =>
-    d.playerId?.startsWith('guest_') ||
-    (d.sharedWith || []).includes(pgId)
-  );
+  if (!pgId) return;
 
-    await savePlaygroupData(pgId, {
-      matches:     DB.matches     || [],
-      tournaments: DB.tournaments || [],
-      sessions:    DB.sessions    || [],
-      decks:       decksForPg,
-    });
-  }
+  // 2. Leer el estado actual del pg ANTES de escribir
+  const currentPgData = await loadPlaygroupData(pgId);
+  const currentDecks  = currentPgData.decks || [];
+
+  // 3. Construir el mapa con los mazos existentes en el pg
+  const deckMap = new Map(currentDecks.map(d => [d.id, d]));
+
+  // 4. Solo pisar los mazos que nos "pertenece" tocar:
+  //    - guests (no tienen subcollection propia)
+  //    - mazos propios compartidos con este pg
+  const myDecksForPg = (DB.decks || []).filter(d =>
+    d.playerId?.startsWith('guest_') ||
+    (d.playerId === uid && (d.sharedWith || []).includes(pgId))
+  );
+  myDecksForPg.forEach(d => deckMap.set(d.id, d));
+
+  await savePlaygroupData(pgId, {
+    matches:     DB.matches     || [],
+    tournaments: DB.tournaments || [],
+    sessions:    DB.sessions    || [],
+    decks:       Array.from(deckMap.values()),
+  });
 }
 
 
