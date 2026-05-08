@@ -1479,7 +1479,13 @@ function renderHistory() {
 
 // ── Match detail modal ──────────────────────────────────────────────────────
 function showMatchModal(matchId) {
-  const m = DB.matches.find(m => m.id === matchId);
+  let m = DB.matches.find(m => m.id === matchId);
+  if (!m) {
+  for (const pgData of Object.values(window._pgCache || {})) {
+    m = (pgData.matches || []).find(m => m.id === matchId);
+    if (m) break;
+    }
+  }
   if (!m) return;
 
   const pgMap = {};
