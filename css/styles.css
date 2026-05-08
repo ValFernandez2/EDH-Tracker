@@ -467,7 +467,9 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 }
 
 .history-item:hover { border-color: var(--gold-border); }
+
 .history-date { font-size: 11px; color: var(--text-sub); min-width: 52px; font-weight: 600; letter-spacing: 0.04em; }
+
 .history-type {
   font-size: 9px;
   font-weight: 700;
@@ -478,8 +480,10 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   background: var(--gold-bg);
   color: var(--gold);
   border: 1px solid var(--gold-border);
-  line-height: center;
+  display:flex;
+  align-items:center;
 }
+
 .history-deck { font-size: 13px; font-weight: 500; flex: 1; min-width: 80px; }
 .result-win { color: var(--success); font-size: 12px; font-weight: 600; }
 .result-loss { color: var(--text-sub); font-size: 12px; }

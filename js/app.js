@@ -2241,22 +2241,30 @@ function renderPgDetail(el, pgId) {
 
     <div class="card-box">
       <div class="section-title">Historial reciente</div>
-      ${recentMatches.length ? recentMatches.map(m => {
-        const t = m.tournamentId ? (pgData.tournaments||[]).find(t=>t.id===m.tournamentId) : null;
-        return `<div class="history-item history-item-clickable" onclick="showPgMatchModal('${m.id}','${pgId}')">
-          <div class="history-date">${formatDate(m.date)}</div>
-          <div class="history-type">${m.type==='ffa'?'Free':'Team'}</div>
-          ${t?`<span class="tag-tournament">${t.name}</span>`:''}
-          <div style="flex:1;min-width:0;">
-            ${(m.slots||[]).map(s=>{
-              const pn = s.playerId ? pgPlayerName(s.playerId) : (s.playerName||'—');
-              const dn = s.deckId   ? pgDeckName(s.deckId)     : (s.deckLabel||'—');
-              const style = s.won ? 'color:var(--success);font-weight:500;' : 'color:var(--text-sub);';
-              return `<span style="font-size:12px;margin-right:8px;${style}">${pn}: ${dn}${s.won?' ✓':''}</span>`;
-            }).join('')}
-          </div>
-        </div>`;
-      }).join('') : '<div class="empty-state">Sin partidas registradas.</div>'}
+      ${recentMatches.length ? `
+        <div class="history-item" style="pointer-events:none;margin-bottom:4px;background:transparent;border-color:transparent;padding-top:2px;padding-bottom:2px;grid-template-columns:80px 70px 1fr 40px;">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-sub);">Fecha</div>
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-sub);">Formato</div>
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-sub);">Jugadores</div>
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-sub);text-align:center;">Comentario</div>
+        </div>
+        ${recentMatches.map(m => {
+          const t          = m.tournamentId ? (pgData.tournaments||[]).find(t=>t.id===m.tournamentId) : null;
+          const hasComment = !!m.comment;
+          return `<div class="history-item history-item-clickable" onclick="showPgMatchModal('${m.id}','${pgId}')" style="grid-template-columns:80px 70px 1fr 40px;">
+            <div class="history-date">${formatDate(m.date)}</div>
+            <div class="history-type">${m.type==='ffa'?'FREE':'TEAM'}</div>
+            <div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+              ${(m.slots||[]).map(s => {
+                const pn = s.playerId ? pgPlayerName(s.playerId) : (s.playerName||'—');
+                const dn = s.deckId   ? pgDeckName(s.deckId)     : (s.deckLabel||'—');
+                return `<span style="margin-right:6px;${s.won?'color:var(--success);font-weight:500;':'color:var(--text-sub);'}">${pn}: ${dn}${s.won?' ✓':''}</span>`;
+              }).join('')}
+            </div>
+            <div style="text-align:center;font-size:13px;opacity:${hasComment?'1':'0.15'};" title="${hasComment?m.comment:''}">💬</div>
+          </div>`;
+        }).join('')}
+      ` : '<div class="empty-state">Sin partidas registradas.</div>'}
     </div>
   `;
 
