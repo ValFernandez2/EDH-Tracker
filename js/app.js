@@ -83,7 +83,8 @@ let historyFilters = {
   toDate: "",
   sessionId: "",
   tournamentId: "",
-  playgroupId: ""
+  playgroupId: "",
+  format: ""
 };
 
 // Team match config
@@ -1381,7 +1382,7 @@ function saveMatch() {
 function renderHistory() {
   const el = document.getElementById('tab-history');
   const myUid = window.AUTH?.user?.uid;
-
+ 
   // Collect matches from ALL playgroups + personal (DB.matches is active pg or personal)
   const allMatchIds = new Set();
   const allMatches = [...DB.matches];
@@ -1391,15 +1392,15 @@ function renderHistory() {
     });
   }
   DB.matches.forEach(m => allMatchIds.add(m.id));
-
+ 
   // Only show MY matches across all sources
   const myMatches = allMatches.filter(m => m.slots?.some(s => s.playerId === myUid));
-
+ 
   if (!myMatches.length) {
     el.innerHTML = '<div class="empty-state">No hay partidas tuyas registradas todavía.</div>';
     return;
   }
-
+ 
   let html = `<div class="card-box deck-toolbar" style="margin-bottom:10px;">
     <div class="deck-toolbar-row">
       <span class="toolbar-row-label">Filtrar</span>
@@ -1421,34 +1422,56 @@ function renderHistory() {
           ${DB.tournaments.map(t=>`<option value="${t.id}" ${t.id === historyFilters.tournamentId ? 'selected' : ''}>${t.name}</option>`).join('')}
           <option value="none" ${historyFilters.tournamentId === 'none' ? 'selected' : ''}>Sin torneo</option>
         </select>
-        ${(historyFilters.fromDate||historyFilters.toDate||historyFilters.sessionId||historyFilters.tournamentId)
+        <select onchange="setHistoryFilter('format', this.value)" class="toolbar-select">
+          <option value="">Todos los formatos</option>
+          <option value="ffa"  ${historyFilters.format === 'ffa'  ? 'selected' : ''}>FFA</option>
+          <option value="2v2"  ${historyFilters.format === '2v2'  ? 'selected' : ''}>2v2</option>
+        </select>
+        <select onchange="setHistoryFilter('playgroupId', this.value)" class="toolbar-select">
+          <option value="">Todos los playgroups</option>
+          ${(window.AUTH?.playgroups||[]).map(pg=>`<option value="${pg.id}" ${pg.id===historyFilters.playgroupId?'selected':''}>${pg.name}</option>`).join('')}
+          <option value="none" ${historyFilters.playgroupId==='none'?'selected':''}>Sin playgroup</option>
+        </select>
+        ${(historyFilters.fromDate||historyFilters.toDate||historyFilters.sessionId||historyFilters.tournamentId||historyFilters.format||historyFilters.playgroupId)
           ? `<button class="btn btn-sm" onclick="clearHistoryFilters()">Limpiar</button>` : ''}
       </div>
     </div>
   </div>`;
-
+ 
   const filtered = applyHistoryFilters(myMatches);
   const sorted = [...filtered].sort((a,b) => (b.date||'').localeCompare(a.date||''));
-
+ 
   // Build a pg lookup map for the badge
   const pgMap = {};
   (window.AUTH?.playgroups || []).forEach(pg => { pgMap[pg.id] = pg.name; });
-
+ 
+  // Header alineado con el grid de los items
+  html += `<div class="history-item" style="pointer-events:none;margin-bottom:4px;background:transparent;border-color:transparent;padding-top:2px;padding-bottom:2px;">
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-sub);">Fecha</div>
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-sub);">Tipo</div>
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-sub);">Playgroup</div>
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-sub);">Jugadores</div>
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-sub);text-align:center;">Ses.</div>
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-sub);text-align:center;">Com.</div>
+  </div>`;
+ 
   sorted.forEach(m => {
-    const t       = m.tournamentId ? DB.tournaments.find(t => t.id === m.tournamentId) : null;
-    const session = m.sessionId    ? DB.sessions.find(s => s.id === m.sessionId)       : null;
-    const pgName  = m.playgroupId  ? pgMap[m.playgroupId] : null;
+    const t          = m.tournamentId ? DB.tournaments.find(t => t.id === m.tournamentId) : null;
+    const session    = m.sessionId    ? DB.sessions.find(s => s.id === m.sessionId)       : null;
+    const pgName     = m.playgroupId  ? pgMap[m.playgroupId] : null;
     const hasComment = !!m.comment;
     html += `<div class="history-item history-item-clickable" onclick="showMatchModal('${m.id}')">
       <div class="history-date">${formatDate(m.date)}</div>
-      <div class="history-type">${m.type==='ffa'?'Free':'Team'}</div>
-      ${pgName ? `<span class="tag-playgroup">${pgName}</span>` : ''}
-      ${t ? `<span class="tag-tournament">${t.name}</span>` : ''}
-      <div style="flex:1;min-width:0;">
-        ${m.slots.map(s=>`<span style="font-size:12px;margin-right:8px;${s.won?'color:var(--color-text-success);font-weight:500;':'color:var(--color-text-secondary);'}">${slotPlayerDisplay(s)}: ${slotDeckDisplay(s)}${s.won?' ✓':''}</span>`).join('')}
+      <div class="history-type">${m.type==='ffa'?'FREE':'TEAM'}</div>
+      <div style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+        ${pgName ? `<span class="tag-playgroup">${pgName}</span>` : ''}
+        ${t      ? `<span class="tag-tournament">${t.name}</span>` : ''}
       </div>
-      ${session ? `<span class="tag-session">${session.name}</span>` : ''}
-      ${hasComment ? `<span title="${m.comment}" style="font-size:14px;opacity:0.7;">💬</span>` : ''}
+      <div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+        ${m.slots.map(s=>`<span style="margin-right:6px;${s.won?'color:var(--color-text-success);font-weight:500;':'color:var(--color-text-secondary);'}">${slotPlayerDisplay(s)}: ${slotDeckDisplay(s)}${s.won?' ✓':''}</span>`).join('')}
+      </div>
+      <div style="text-align:center;font-size:13px;opacity:${session?'1':'0.15'};" title="${session?session.name:''}">👥</div>
+      <div style="text-align:center;font-size:13px;opacity:${hasComment?'1':'0.15'};" title="${hasComment?m.comment:''}">💬</div>
     </div>`;
   });
   el.innerHTML = html;
@@ -1586,6 +1609,20 @@ function applyHistoryFilters(matches) {
       }
     }
 
+    // 🎮 Formato
+    if (historyFilters.format) {
+      if (m.type !== historyFilters.format) return false;
+    }
+
+    // 👥 Playgroup
+    if (historyFilters.playgroupId) {
+      if (historyFilters.playgroupId === 'none') {
+        if (m.playgroupId) return false;
+      } else {
+        if (m.playgroupId !== historyFilters.playgroupId) return false;
+      }
+    }
+
     return true;
   });
 }
@@ -1602,7 +1639,8 @@ function clearHistoryFilters() {
     toDate: "",
     sessionId: "",
     tournament: "all",
-    playgroupId: ""
+    playgroupId: "",
+    format: ""
   };
   renderHistory();
 }
@@ -2047,6 +2085,8 @@ function renderAll() {
 
 // ── Playgroups tab ───────────────────────────────────────────────────────────
 let activePgDetailId = null; // which pg is being viewed in detail
+let pgDetailFilter = 'all';  // 'all' | 'ffa' | '2v2'
+let pgDetailSort   = 'wr';   // 'wr' | 'wins' | 'played'
 
 function renderPlaygroups() {
   const el = document.getElementById('tab-playgroups');
@@ -2069,7 +2109,6 @@ function renderPlaygroups() {
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px;">
           ${Object.values(pg.members||{}).map(m=>`<span style="font-size:11px;background:var(--bg-raised);border:1px solid var(--border);border-radius:12px;padding:2px 8px;">${m.displayName}</span>`).join('')}
         </div>
-        <div style="font-size:10px;color:var(--text-sub);">Código: <span style="color:var(--gold);font-weight:700;letter-spacing:0.1em;">${pg.code}</span></div>
       </div>`;
     });
     html += `</div>`;
@@ -2105,7 +2144,6 @@ function renderPgDetail(el, pgId) {
   const pgPlayerName = id => {
     const m = members.find(m => m.id === id);
     if (m) return m.displayName;
-    // guest fallback
     const guestKey = id.replace('guest_','');
     return members.find(m => m.legacyId === guestKey)?.displayName || id;
   };
@@ -2114,13 +2152,22 @@ function renderPgDetail(el, pgId) {
     return d ? d.name : (DB.decks.find(d => d.id === id)?.name || '—');
   };
 
-  // Stats per member
+  // Filter matches by format
+  const filteredMatches = pgDetailFilter === 'all' ? matches
+    : matches.filter(m => m.type === pgDetailFilter);
+
+  // Stats per member using filtered matches
   const memberStats = members.map(m => {
-    const ms   = matches.filter(match => match.slots?.some(s => s.playerId === m.id));
+    const ms   = filteredMatches.filter(match => match.slots?.some(s => s.playerId === m.id));
     const wins = ms.filter(match => match.slots.some(s => s.playerId === m.id && s.won)).length;
     const wr   = ms.length ? Math.round(wins/ms.length*100) : 0;
     return { ...m, played: ms.length, wins, wr };
-  }).filter(r => r.played > 0).sort((a,b) => b.wr - a.wr || b.wins - a.wins);
+  }).filter(r => r.played > 0).sort((a,b) => {
+    if (pgDetailSort === 'wr')     return b.wr - a.wr || b.wins - a.wins;
+    if (pgDetailSort === 'wins')   return b.wins - a.wins || b.wr - a.wr;
+    if (pgDetailSort === 'played') return b.played - a.played || b.wr - a.wr;
+    return 0;
+  });
 
   // All decks seen in matches
   const deckIds = [...new Set(matches.flatMap(m => m.slots?.map(s => s.deckId)||[]))];
@@ -2140,7 +2187,11 @@ function renderPgDetail(el, pgId) {
       <button class="btn btn-sm" onclick="window.__closePgDetail()">← Volver</button>
       <div>
         <div style="font-family:'Cinzel',serif;font-size:18px;font-weight:600;color:var(--gold);">${pg.name}</div>
-        <div style="font-size:11px;color:var(--text-sub);">${members.length} miembros · Código: <span style="color:var(--gold);font-weight:700;">${pg.code}</span></div>
+        <div style="font-size:11px;color:var(--text-sub);">
+          ${members.length} miembros · Código:
+          <span id="pg-code-display" style="color:var(--gold);font-weight:700;letter-spacing:0.1em;">••••••</span>
+          <button class="btn btn-sm" style="padding:1px 6px;font-size:10px;margin-left:6px;" onclick="togglePgCode('${pg.code}')">Mostrar</button>
+        </div>
       </div>
       <button class="btn btn-sm btn-danger" style="margin-left:auto;" onclick="window.__leavePg('${pg.id}','${pg.name.replace(/'/g,"\\'")}')">Abandonar</button>
     </div>
@@ -2153,13 +2204,26 @@ function renderPgDetail(el, pgId) {
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:1.25rem;">
       <div class="card-box">
-        <div class="section-title">Ranking</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div class="section-title" style="margin-bottom:0;">Ranking</div>
+          <div style="display:flex;gap:4px;">
+            <button class="sort-btn${pgDetailFilter==='all'?' active':''}" onclick="setPgFilter('all')">Todo</button>
+            <button class="sort-btn${pgDetailFilter==='ffa'?' active':''}" onclick="setPgFilter('ffa')">FFA</button>
+            <button class="sort-btn${pgDetailFilter==='2v2'?' active':''}" onclick="setPgFilter('2v2')">2v2</button>
+          </div>
+        </div>
         ${memberStats.length ? `<table style="width:100%;">
-          <thead><tr><th>#</th><th>Jugador</th><th>Partidas</th><th>WR</th></tr></thead>
+          <thead><tr>
+            <th>#</th><th>Jugador</th>
+            <th onclick="setPgSort('played')" style="cursor:pointer;">Partidas${pgDetailSort==='played'?' ↓':''}</th>
+            <th onclick="setPgSort('wins')"   style="cursor:pointer;">Victorias${pgDetailSort==='wins'?' ↓':''}</th>
+            <th onclick="setPgSort('wr')"     style="cursor:pointer;">WR${pgDetailSort==='wr'?' ↓':''}</th>
+          </tr></thead>
           <tbody>${memberStats.map((r,i) => `<tr class="${r.id===myUid?'my-row':''}${i===0?' rank-1':''}">
             <td style="color:var(--text-sub);font-size:12px;">${['🥇','🥈','🥉'][i]||i+1}</td>
             <td style="font-weight:${r.id===myUid?'700':'400'};color:${r.id===myUid?'var(--gold)':'inherit'};">${r.displayName}${r.isGuest?'<span style="font-size:9px;color:var(--text-sub);margin-left:4px;">guest</span>':''}</td>
             <td style="color:var(--text-sub);">${r.played}</td>
+            <td>${r.wins}</td>
             <td><span style="font-weight:600;color:${r.wr>=50?'var(--success)':'var(--text-sub)'};">${r.wr}%</span></td>
           </tr>`).join('')}</tbody>
         </table>` : '<div class="empty-state">Sin partidas todavía.</div>'}
@@ -2179,17 +2243,17 @@ function renderPgDetail(el, pgId) {
       <div class="section-title">Historial reciente</div>
       ${recentMatches.length ? recentMatches.map(m => {
         const t = m.tournamentId ? (pgData.tournaments||[]).find(t=>t.id===m.tournamentId) : null;
-        return `<div class="history-item">
+        return `<div class="history-item history-item-clickable" onclick="showPgMatchModal('${m.id}','${pgId}')">
           <div class="history-date">${formatDate(m.date)}</div>
           <div class="history-type">${m.type==='ffa'?'Free':'Team'}</div>
           ${t?`<span class="tag-tournament">${t.name}</span>`:''}
           <div style="flex:1;min-width:0;">
             ${(m.slots||[]).map(s=>{
-  const pn = s.playerId ? pgPlayerName(s.playerId) : (s.playerName||'—');
-  const dn = s.deckId   ? pgDeckName(s.deckId)     : (s.deckLabel||'—');
-  const style = s.won ? 'color:var(--success);font-weight:500;' : 'color:var(--text-sub);';
-  return `<span style="font-size:12px;margin-right:8px;${style}">${pn}: ${dn}${s.won?' ✓':''}</span>`;
-}).join('')}
+              const pn = s.playerId ? pgPlayerName(s.playerId) : (s.playerName||'—');
+              const dn = s.deckId   ? pgDeckName(s.deckId)     : (s.deckLabel||'—');
+              const style = s.won ? 'color:var(--success);font-weight:500;' : 'color:var(--text-sub);';
+              return `<span style="font-size:12px;margin-right:8px;${style}">${pn}: ${dn}${s.won?' ✓':''}</span>`;
+            }).join('')}
           </div>
         </div>`;
       }).join('') : '<div class="empty-state">Sin partidas registradas.</div>'}
@@ -2298,13 +2362,102 @@ function renderProfile() {
         <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-subtle);">
           <div>
             <div style="font-size:14px;font-weight:500;">${pg.name}</div>
-            <div style="font-size:11px;color:var(--text-sub);">${Object.keys(pg.members||{}).length} miembros · Código: <span style="color:var(--gold);">${pg.code}</span></div>
+            <div style="font-size:11px;color:var(--text-sub);">${Object.keys(pg.members||{}).length} miembros · Código: <span style="color:var(--gold);">••••••</span></div>
           </div>
         </div>
       `).join('') : '<div class="empty-state">Sin playgroups todavía.</div>'}
     </div>
   `;
 }
+
+window.setPgFilter = (f) => { pgDetailFilter = f; renderPlaygroups(); };
+window.setPgSort   = (s) => { pgDetailSort   = s; renderPlaygroups(); };
+
+window.togglePgCode = (code) => {
+  const el  = document.getElementById('pg-code-display');
+  const btn = el?.nextElementSibling;
+  if (!el) return;
+  const hidden = el.textContent === '••••••';
+  el.textContent = hidden ? code : '••••••';
+  if (btn) btn.textContent = hidden ? 'Ocultar' : 'Mostrar';
+};
+
+function showPgMatchModal(matchId, pgId) {
+  const pgData = window._pgCache?.[pgId];
+  if (!pgData) return;
+  const m = (pgData.matches || []).find(m => m.id === matchId);
+  if (!m) return;
+
+  const pg      = (window.AUTH?.playgroups || []).find(p => p.id === pgId);
+  const members = Object.entries(pg?.members || {}).map(([uid,m]) => ({ id: uid, ...m }));
+  const decks   = pgData.decks || [];
+
+  const pgPlayerName = id => members.find(m => m.id === id)?.displayName || id.replace('guest_','');
+  const pgDeckName   = id => decks.find(d => d.id === id)?.name || DB.decks.find(d => d.id === id)?.name || '—';
+
+  const overlay = document.getElementById('modal-overlay');
+  const box     = document.getElementById('modal-box');
+  if (!overlay || !box) return;
+
+  const t      = m.tournamentId ? (pgData.tournaments||[]).find(t => t.id === m.tournamentId) : null;
+  const isTeam = m.type === '2v2';
+  const draw   = (m.slots||[]).some(s => s.draw);
+  const teamColors = ['var(--gold)','#6a9fc8','#60a860','#c87060'];
+
+  let slotsHtml = '';
+  if (isTeam) {
+    const byTeam = (m.slots||[]).reduce((acc,s) => {
+      const ti = s.team ?? 0;
+      if (!acc[ti]) acc[ti] = [];
+      acc[ti].push(s);
+      return acc;
+    }, {});
+    slotsHtml = Object.entries(byTeam).map(([t, tSlots]) => {
+      const ti = parseInt(t);
+      const teamWon = tSlots.some(s => s.won);
+      return `<div style="border-left:3px solid ${teamColors[ti]||'var(--border)'};padding-left:12px;margin-bottom:12px;">
+        <div style="font-size:12px;font-weight:700;color:${teamColors[ti]||'var(--text-sub)'};margin-bottom:6px;">
+          Equipo ${ti+1} ${teamWon?'<span style="color:var(--success);">✓ Ganó</span>':''}
+        </div>
+        ${tSlots.map(s=>`<div style="padding:6px 0;border-bottom:1px solid var(--border-subtle);">
+          <div style="font-size:14px;font-weight:500;">${pgPlayerName(s.playerId)}</div>
+          <div style="font-size:12px;color:var(--gold);">${pgDeckName(s.deckId)}</div>
+        </div>`).join('')}
+      </div>`;
+    }).join('');
+  } else {
+    slotsHtml = (m.slots||[]).map(s => `
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-subtle);">
+        <div style="flex:1;">
+          <div style="font-size:14px;font-weight:${s.won?'700':'400'};color:${s.won?'var(--text)':'var(--text-sub)'};">${pgPlayerName(s.playerId)}</div>
+          <div style="font-size:12px;color:var(--gold);">${pgDeckName(s.deckId)}</div>
+        </div>
+        ${s.won ? '<span style="font-size:18px;">🏆</span>' : ''}
+        ${draw && !s.won ? '<span style="font-size:12px;color:var(--text-sub);">Empate</span>' : ''}
+      </div>`).join('');
+  }
+
+  box.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div>
+        <div style="font-family:'Cinzel',serif;font-size:16px;font-weight:600;color:var(--gold);">
+          ${isTeam ? 'Por Equipos' : 'Todos contra Todos'}
+        </div>
+        <div style="font-size:12px;color:var(--text-sub);margin-top:2px;">
+          ${formatDate(m.date)}${t ? ` · <span style="color:var(--gold);">${t.name}</span>` : ''}
+        </div>
+      </div>
+      <button class="btn btn-sm" onclick="closeModal()">✕</button>
+    </div>
+    <div style="margin-bottom:14px;">${slotsHtml}</div>
+    ${m.comment ? `<div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-md);padding:10px 14px;">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text-sub);margin-bottom:4px;">Comentario</div>
+      <div style="font-size:13px;">${m.comment}</div>
+    </div>` : ''}
+  `;
+  overlay.classList.add('open');
+}
+window.showPgMatchModal = showPgMatchModal;
 
 // Called by auth.js after login
 window.__appBoot = async function() {
