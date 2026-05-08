@@ -325,21 +325,25 @@ export async function saveAppData(DB) {
 
   if (!pgId) return;
 
-  // 2. Leer el estado actual del pg ANTES de escribir
+  // Read current pg data to preserve other members' decks
   const currentPgData = await loadPlaygroupData(pgId);
   const currentDecks  = currentPgData.decks || [];
 
-  // 3. Construir el mapa con los mazos existentes en el pg
+  // Build deck map from existing pg decks (includes guests + other members' shared)
   const deckMap = new Map(currentDecks.map(d => [d.id, d]));
 
-  // 4. Solo pisar los mazos que nos "pertenece" tocar:
-  //    - guests (no tienen subcollection propia)
-  //    - mazos propios compartidos con este pg
+  // Only update decks we "own": guests and our own shared ones
+  // (Other members' shared decks are synced by syncDeckToPlaygroups when they change)
   const myDecksForPg = (DB.decks || []).filter(d =>
     d.playerId?.startsWith('guest_') ||
     (d.playerId === uid && (d.sharedWith || []).includes(pgId))
   );
   myDecksForPg.forEach(d => deckMap.set(d.id, d));
+
+  // Also remove our own decks that are NO LONGER shared with this pg
+  currentDecks
+    .filter(d => d.playerId === uid && !(d.sharedWith || []).includes(pgId))
+    .forEach(d => deckMap.delete(d.id));
 
   await savePlaygroupData(pgId, {
     matches:     DB.matches     || [],

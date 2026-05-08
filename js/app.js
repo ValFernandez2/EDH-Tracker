@@ -6,6 +6,37 @@ function save() {
   saveAppData(window.DB).catch(e => console.error('Save error:', e));
 }
 
+// Called when a deck's sharedWith changes — updates each playgroup doc immediately
+async function syncDeckToPlaygroups(deck) {
+  const uid = window.AUTH?.user?.uid;
+  if (!uid || deck.playerId !== uid) return;
+  const { loadPlaygroupData, savePlaygroupData } = await import('./firebase.js');
+  const sharedWith = deck.sharedWith || [];
+  const allPgIds = (window.AUTH?.playgroups || []).map(pg => pg.id);
+
+  for (const pgId of allPgIds) {
+    try {
+      const pgData = await loadPlaygroupData(pgId);
+      let pgDecks = pgData.decks || [];
+
+      if (sharedWith.includes(pgId)) {
+        // Add or update this deck in the playgroup
+        const idx = pgDecks.findIndex(d => d.id === deck.id);
+        if (idx >= 0) pgDecks[idx] = deck;
+        else pgDecks.push(deck);
+      } else {
+        // Remove only THIS user's deck — never touch guest or other users' decks
+        pgDecks = pgDecks.filter(d => !(d.id === deck.id && d.playerId === uid));
+      }
+
+      await savePlaygroupData(pgId, { ...pgData, decks: pgDecks });
+
+      // Update local cache
+      if (window._pgCache?.[pgId]) window._pgCache[pgId].decks = pgDecks;
+    } catch(e) { console.warn('syncDeck error for pg', pgId, e); }
+  }
+}
+
 function normalizeDB() {
   DB.players     = DB.players     || [];
   DB.decks       = DB.decks       || [];
@@ -601,8 +632,11 @@ function addDeck() {
   const colors = [...document.querySelectorAll('#color-picker input:checked')].map(c => c.value);
   if (colors.length === 0) { alert('Seleccioná al menos un color para el mazo.'); return; }
   const sharedWith = [...document.querySelectorAll('#deck-share-pgs input:checked')].map(cb => cb.value);
-  DB.decks.push({ id: uid(), playerId: pid, name, commander: commanderFull, commanderFull, colors, sharedWith, createdAt: Date.now() });
-  save(); renderAll();
+  const newDeck = { id: uid(), playerId: pid, name, commander: commanderFull, commanderFull, colors, sharedWith, createdAt: Date.now() };
+  DB.decks.push(newDeck);
+  save();
+  syncDeckToPlaygroups(newDeck).catch(e => console.error('Deck sync error:', e));
+  renderAll();
 }
 
 function deleteDeck(id) {
@@ -653,7 +687,9 @@ function saveEditDeck() {
   deck.colors = colors;
   deck.sharedWith = [...document.querySelectorAll('#deck-share-pgs input:checked')].map(cb => cb.value);
   editingDeckId = null;
-  save(); renderAll();
+  save();
+  syncDeckToPlaygroups(deck).catch(e => console.error('Deck sync error:', e));
+  renderAll();
 }
 
 // ── Deck sort/filter helpers ───────────────────────────────────────────────
@@ -730,8 +766,10 @@ function onDeckInput(slotKey, value) {
       // Use pgCache which has decks from all members (guests + shared)
       const pgCacheDecks = window._pgCache?.[matchPlaygroupId]?.decks || [];
       const deckMap = new Map(pgCacheDecks.map(d => [d.id, d]));
-      // Always merge our own fresh decks
-      DB.decks.filter(d => d.playerId === myUid).forEach(d => deckMap.set(d.id, d));
+      // Merge our own decks that are shared with this pg
+      DB.decks
+        .filter(d => d.playerId === myUid && (d.sharedWith || []).includes(matchPlaygroupId))
+        .forEach(d => deckMap.set(d.id, d));
       availableDecks = Array.from(deckMap.values());
       // If cache seems empty, trigger a background reload
       if (!pgCacheDecks.length) {
@@ -743,6 +781,7 @@ function onDeckInput(slotKey, value) {
         });
       }
     } else {
+      // Personal mode: show all my decks
       availableDecks = DB.decks.filter(d => d.playerId === myUid);
     }
 
@@ -1343,8 +1382,18 @@ function renderHistory() {
   const el = document.getElementById('tab-history');
   const myUid = window.AUTH?.user?.uid;
 
-  // Only show MY matches
-  const myMatches = DB.matches.filter(m => m.slots?.some(s => s.playerId === myUid));
+  // Collect matches from ALL playgroups + personal (DB.matches is active pg or personal)
+  const allMatchIds = new Set();
+  const allMatches = [...DB.matches];
+  for (const [pgId, pgData] of Object.entries(window._pgCache || {})) {
+    (pgData.matches || []).forEach(m => {
+      if (!allMatchIds.has(m.id)) { allMatchIds.add(m.id); allMatches.push(m); }
+    });
+  }
+  DB.matches.forEach(m => allMatchIds.add(m.id));
+
+  // Only show MY matches across all sources
+  const myMatches = allMatches.filter(m => m.slots?.some(s => s.playerId === myUid));
 
   if (!myMatches.length) {
     el.innerHTML = '<div class="empty-state">No hay partidas tuyas registradas todavía.</div>';
@@ -1566,8 +1615,14 @@ function editMatch(id) {
   matchType = m.type;
 
   if (m.type === 'ffa') {
-    // Load slots state from match data
-    window.ffaSlots = m.slots.map(s => ({ playerId: s.playerId, deckId: s.deckId, won: s.won, draw: s.draw }));
+    // Load slots state from match data (including personal mode fields)
+    window.ffaSlots = m.slots.map(s => ({
+      playerId:   s.playerId   || '',
+      playerName: s.playerName || '',
+      deckId:     s.deckId     || '',
+      deckLabel:  s.deckLabel  || '',
+      won: s.won, draw: s.draw
+    }));
     // Store winning index / draw so renderMatch can pre-check the radio
     window._editFfaWin = m.slots.findIndex(s => s.won);
     window._editFfaDraw = m.slots.some(s => s.draw);
@@ -1586,9 +1641,14 @@ function editMatch(id) {
     window._editTeamDraw = m.slots.some(s => s.draw);
   }
 
+  // Restore playgroup and session from the match
+  matchPlaygroupId = m.playgroupId || null;
+  if (m.sessionId) currentSessionId = m.sessionId;
+
   // Store date and tournament for after render
-  window._editMatchDate = m.date;
-  window._editMatchTournament = m.tournamentId || '';
+  window._editMatchDate        = m.date;
+  window._editMatchTournament  = m.tournamentId || '';
+  window._editMatchPlaygroupId = m.playgroupId  || '';
 
   renderMatch();
   showTab('match');
@@ -1599,6 +1659,8 @@ function editMatch(id) {
     if (dateEl) dateEl.value = window._editMatchDate;
     const tEl = document.getElementById('m-tournament');
     if (tEl && window._editMatchTournament) tEl.value = window._editMatchTournament;
+    const pgEl = document.getElementById('m-playgroup');
+    if (pgEl && window._editMatchPlaygroupId) pgEl.value = window._editMatchPlaygroupId;
     const commentEl = document.getElementById('m-comment');
     if (commentEl) {
       commentEl.value = m.comment || '';
@@ -1644,7 +1706,13 @@ function renderStats() {
   const el = document.getElementById('tab-stats');
   const myUid    = window.AUTH?.user?.uid;
   const myDecks  = DB.decks.filter(d => d.playerId === myUid);
-  const myMatches = DB.matches.filter(m => m.slots?.some(s => s.playerId === myUid));
+  // Collect matches from all pg caches for accurate personal stats
+  const _allStatsMatches = [...DB.matches];
+  const _seenIds = new Set(DB.matches.map(m => m.id));
+  for (const pgData of Object.values(window._pgCache || {})) {
+    (pgData.matches || []).forEach(m => { if (!_seenIds.has(m.id)) { _seenIds.add(m.id); _allStatsMatches.push(m); } });
+  }
+  const myMatches = _allStatsMatches.filter(m => m.slots?.some(s => s.playerId === myUid));
   const myWins   = myMatches.filter(m => m.slots?.some(s => s.playerId === myUid && s.won));
   const wr       = myMatches.length ? Math.round(myWins.length / myMatches.length * 100) : 0;
   const ffa      = myMatches.filter(m => m.type === 'ffa').length;
@@ -2196,7 +2264,12 @@ function renderProfile() {
   const myUid  = window.AUTH?.user?.uid;
   const pgs    = window.AUTH?.playgroups || [];
   const myDecks   = DB.decks.filter(d => d.playerId === myUid);
-  const myMatches = DB.matches.filter(m => m.slots?.some(s => s.playerId === myUid));
+  const _allProfMatches = [...DB.matches];
+  const _profSeen = new Set(DB.matches.map(m => m.id));
+  for (const pgData of Object.values(window._pgCache || {})) {
+    (pgData.matches || []).forEach(m => { if (!_profSeen.has(m.id)) { _profSeen.add(m.id); _allProfMatches.push(m); } });
+  }
+  const myMatches = _allProfMatches.filter(m => m.slots?.some(s => s.playerId === myUid));
   const myWins    = myMatches.filter(m => m.slots?.some(s => s.playerId === myUid && s.won));
   const wr        = myMatches.length ? Math.round(myWins.length / myMatches.length * 100) : 0;
   const deckStats = myDecks.map(d => {
@@ -2309,6 +2382,7 @@ window.addPlayer = addPlayer;
 window.deletePlayer = deletePlayer;
 
 window.showTab = showTab;
+window.syncDeckToPlaygroups = syncDeckToPlaygroups;
 window.showMatchModal = showMatchModal;
 window.closeModal = closeModal;
 window.renderPlaygroups = renderPlaygroups;
